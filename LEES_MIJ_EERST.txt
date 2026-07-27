@@ -1,0 +1,21 @@
+GEERTOS – SPRINT 6: FAMILIE & OPA-FONDS
+
+1. Pak dit ZIP-bestand volledig uit.
+2. Open de uitgepakte map project_vrijheid.
+3. Dubbelklik op INSTALLEREN_EN_STARTEN.bat.
+4. GeertOS opent vanzelf in de browser.
+
+DIT ZIE JE DIRECT:
+- Nieuwe tegels Familie, Kleinkinderen en Opa-fonds op het Dashboard.
+- Nieuwe menuknop Familie.
+- Nieuwe menuknop Opa-fonds.
+- Werkende stortingen die direct het Dashboard, de voortgang en de grafiek aanpassen.
+
+FAMILIE:
+- Christel
+- Brian, Lisa en Laura
+- Bonusdochters Liza en Roza
+- Kleinkinderen Aydin, Sade en Isabel
+
+BELANGRIJK:
+Van Aydin is alleen bekend dat hij in april 2022 geboren is. Daarom staat voorlopig 01-04-2022 ingevuld. Dit kun je in GeertOS eenvoudig aanpassen zodra je de exacte datum invoert.
