@@ -34,7 +34,6 @@ from database import (
     add_opa_transaction,
 )
 from styles import css
-from security import access_control_enabled, require_access
 
 
 st.set_page_config(
@@ -43,7 +42,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-require_access()
 init_db()
 settings = get_settings()
 
@@ -122,12 +120,6 @@ st.markdown(css(dark_mode), unsafe_allow_html=True)
 
 st.sidebar.markdown("## 🟦 GeertOS")
 st.sidebar.caption("Freedom Edition · financiële cockpit")
-st.sidebar.success("✅ GeertOS 6.1 · Familie & Opa-fonds actief")
-if access_control_enabled():
-    st.sidebar.caption("🔒 Toegangscode actief")
-else:
-    st.sidebar.caption("💻 Alleen lokaal · geen toegangscode ingesteld")
-st.sidebar.caption(f"Bronmap: {__file__}")
 PAGES = [
     "Dashboard",
     "Familie",
@@ -223,7 +215,6 @@ def dashboard() -> None:
         "Dashboard",
         "In één oogopslag zien of je financiële vrijheid op koers ligt.",
     )
-    st.success("✅ Sprint 6.1 actief — Familie en Opa-fonds zijn nu onderdeel van jouw dashboard.")
     balance = read_table("balance_items")
     assets = balance.loc[balance["item_type"] == "asset", "amount"].sum()
     debts = balance.loc[balance["item_type"] == "liability", "amount"].sum()
@@ -1422,3 +1413,4 @@ ROUTES = {
     "Mijn uitgangspunten": settings_page,
 }
 ROUTES[page]()
+

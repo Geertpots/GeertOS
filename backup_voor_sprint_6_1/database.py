@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -10,19 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 
-def _database_path() -> Path:
-    """Gebruik lokaal de bestaande database, of een expliciet ingestelde locatie."""
-    configured = os.getenv("GEERTOS_DB_PATH", "").strip()
-    path = (
-        Path(configured).expanduser()
-        if configured
-        else Path(__file__).with_name("project_vrijheid.db")
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path.resolve()
-
-
-DB_PATH = _database_path()
+DB_PATH = Path(__file__).with_name("project_vrijheid.db")
 
 
 @contextmanager

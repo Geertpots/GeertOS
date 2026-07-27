@@ -1,0 +1,19 @@
+"""Tests voor de toegangsconfiguratie van GeertOS."""
+
+from __future__ import annotations
+
+import security
+
+
+def test_access_control_disabled_without_configuration(monkeypatch) -> None:
+    monkeypatch.delenv("GEERTOS_ACCESS_CODE", raising=False)
+    monkeypatch.setattr(security.st, "secrets", {})
+
+    assert security.access_control_enabled() is False
+
+
+def test_access_control_enabled_from_environment(monkeypatch) -> None:
+    monkeypatch.setenv("GEERTOS_ACCESS_CODE", "een-geheime-code")
+    monkeypatch.setattr(security.st, "secrets", {})
+
+    assert security.access_control_enabled() is True
