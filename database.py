@@ -1,99 +1,104 @@
-"""SQLite persistence layer for Project Vrijheid."""
+"""Provider-neutrale opslaglaag voor GeertOS (SQLite en PostgreSQL)."""
 
 from __future__ import annotations
 
-import os
-import sqlite3
-from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 
-
-def _database_path() -> Path:
-    """Gebruik lokaal de bestaande database, of een expliciet ingestelde locatie."""
-    configured = os.getenv("GEERTOS_DB_PATH", "").strip()
-    path = (
-        Path(configured).expanduser()
-        if configured
-        else Path(__file__).with_name("project_vrijheid.db")
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path.resolve()
+from cloud_database import (
+    backend_name,
+    connection,
+    placeholders,
+    rows_as_dicts,
+    scalar,
+)
+from config import sqlite_path
 
 
-DB_PATH = _database_path()
-
-
-@contextmanager
-def connection():
-    db = sqlite3.connect(DB_PATH)
-    db.row_factory = sqlite3.Row
-    try:
-        yield db
-        db.commit()
-    finally:
-        db.close()
+DB_PATH = sqlite_path()
 
 
 def init_db() -> None:
     with connection() as db:
-        db.executescript(
+        id_column = (
+            "BIGSERIAL PRIMARY KEY"
+            if backend_name() == "postgresql"
+            else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        )
+        statements = [
             """
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
-            );
+            )
+            """,
+            f"""
             CREATE TABLE IF NOT EXISTS balance_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {id_column},
                 category TEXT NOT NULL,
                 name TEXT NOT NULL,
-                amount REAL NOT NULL DEFAULT 0,
+                amount NUMERIC NOT NULL DEFAULT 0,
                 item_type TEXT NOT NULL CHECK(item_type IN ('asset','liability'))
-            );
+            )
+            """,
+            f"""
             CREATE TABLE IF NOT EXISTS etf_positions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {id_column},
                 name TEXT NOT NULL,
                 ticker TEXT NOT NULL,
-                invested REAL NOT NULL DEFAULT 0,
-                value REAL NOT NULL DEFAULT 0
-            );
+                invested NUMERIC NOT NULL DEFAULT 0,
+                value NUMERIC NOT NULL DEFAULT 0
+            )
+            """,
+            f"""
             CREATE TABLE IF NOT EXISTS bitcoin_transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {id_column},
                 trade_date TEXT NOT NULL,
-                amount_eur REAL NOT NULL,
-                btc_amount REAL NOT NULL,
+                amount_eur NUMERIC NOT NULL,
+                btc_amount NUMERIC NOT NULL,
                 note TEXT DEFAULT ''
-            );
+            )
+            """,
+            f"""
             CREATE TABLE IF NOT EXISTS expenses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {id_column},
                 category TEXT NOT NULL,
                 description TEXT NOT NULL,
-                monthly_amount REAL NOT NULL DEFAULT 0
-            );
+                monthly_amount NUMERIC NOT NULL DEFAULT 0
+            )
+            """,
+            f"""
             CREATE TABLE IF NOT EXISTS family_members (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {id_column},
                 name TEXT NOT NULL UNIQUE,
                 relationship TEXT NOT NULL,
                 birth_date TEXT DEFAULT '',
                 notes TEXT DEFAULT ''
-            );
+            )
+            """,
+            f"""
             CREATE TABLE IF NOT EXISTS opa_funds (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {id_column},
                 child_name TEXT NOT NULL UNIQUE,
                 birth_date TEXT NOT NULL,
-                target_amount REAL NOT NULL DEFAULT 25000,
-                expected_return_pct REAL NOT NULL DEFAULT 5.0
-            );
+                target_amount NUMERIC NOT NULL DEFAULT 25000,
+                expected_return_pct NUMERIC NOT NULL DEFAULT 5.0
+            )
+            """,
+            f"""
             CREATE TABLE IF NOT EXISTS opa_transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {id_column},
                 child_name TEXT NOT NULL,
                 transaction_date TEXT NOT NULL,
-                amount REAL NOT NULL,
+                amount NUMERIC NOT NULL,
                 note TEXT DEFAULT ''
-            );
-            """
-        )
+            )
+            """,
+        ]
+        for statement in statements:
+            db.execute(statement)
         defaults = {
             "birth_date": "1964-12-21",
             "target_monthly": "4000",
@@ -110,6 +115,7 @@ def init_db() -> None:
             "partner_pension_monthly": "350",
             "aow_combined_monthly": "2000",
             "side_income_monthly": "1500",
+            "bitcoin_current_price": "60000",
             "dark_mode": "1",
             "sale_property_price": "1595000",
             "sale_property_book": "885000",
@@ -126,16 +132,21 @@ def init_db() -> None:
             "sale_net_cash_goal": "600000",
         }
         db.executemany(
-            "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
+            placeholders(
+                """
+                INSERT INTO settings(key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO NOTHING
+                """
+            ),
             defaults.items(),
         )
 
-        if db.execute("SELECT COUNT(*) FROM balance_items").fetchone()[0] == 0:
+        if scalar(db, "SELECT COUNT(*) FROM balance_items") == 0:
             db.executemany(
-                """
+                placeholders("""
                 INSERT INTO balance_items(category,name,amount,item_type)
                 VALUES (?,?,?,?)
-                """,
+                """),
                 [
                     ("Beleggingen", "ETF-portefeuille", 500000, "asset"),
                     ("Buffer", "Spaargeld", 100000, "asset"),
@@ -143,24 +154,24 @@ def init_db() -> None:
                     ("Overig", "Bitcoin", 0, "asset"),
                 ],
             )
-        if db.execute("SELECT COUNT(*) FROM etf_positions").fetchone()[0] == 0:
+        if scalar(db, "SELECT COUNT(*) FROM etf_positions") == 0:
             db.executemany(
-                """
+                placeholders("""
                 INSERT INTO etf_positions(name,ticker,invested,value)
                 VALUES (?,?,?,?)
-                """,
+                """),
                 [
                     ("Wereldwijde aandelen", "VWCE", 350000, 350000),
                     ("Wereldwijde obligaties", "VAGF", 100000, 100000),
                     ("Geldmarkt / kortlopend", "XEON", 50000, 50000),
                 ],
             )
-        if db.execute("SELECT COUNT(*) FROM expenses").fetchone()[0] == 0:
+        if scalar(db, "SELECT COUNT(*) FROM expenses") == 0:
             db.executemany(
-                """
+                placeholders("""
                 INSERT INTO expenses(category,description,monthly_amount)
                 VALUES (?,?,?)
-                """,
+                """),
                 [
                     ("Wonen", "Woonlasten", 1200),
                     ("Levensonderhoud", "Boodschappen en dagelijks", 900),
@@ -170,12 +181,12 @@ def init_db() -> None:
                 ],
             )
 
-        if db.execute("SELECT COUNT(*) FROM family_members").fetchone()[0] == 0:
+        if scalar(db, "SELECT COUNT(*) FROM family_members") == 0:
             db.executemany(
-                """
+                placeholders("""
                 INSERT INTO family_members(name,relationship,birth_date,notes)
                 VALUES (?,?,?,?)
-                """,
+                """),
                 [
                     ("Christel", "Partner", "1970-09-07", ""),
                     ("Brian", "Kind", "", ""),
@@ -188,12 +199,12 @@ def init_db() -> None:
                     ("Isabel", "Kleinkind", "2025-08-01", ""),
                 ],
             )
-        if db.execute("SELECT COUNT(*) FROM opa_funds").fetchone()[0] == 0:
+        if scalar(db, "SELECT COUNT(*) FROM opa_funds") == 0:
             db.executemany(
-                """
+                placeholders("""
                 INSERT INTO opa_funds(child_name,birth_date,target_amount,expected_return_pct)
                 VALUES (?,?,?,?)
-                """,
+                """),
                 [
                     ("Aydin", "2022-04-01", 25000, 5.0),
                     ("Sade", "2024-04-04", 25000, 5.0),
@@ -207,7 +218,10 @@ def read_table(table: str) -> pd.DataFrame:
     if table not in allowed:
         raise ValueError("Unknown table")
     with connection() as db:
-        return pd.read_sql_query(f"SELECT * FROM {table} ORDER BY id", db)
+        cursor = db.execute(f"SELECT * FROM {table} ORDER BY id")
+        rows = rows_as_dicts(cursor)
+        columns = [description[0] for description in cursor.description]
+        return pd.DataFrame(rows, columns=columns)
 
 
 def replace_table(table: str, frame: pd.DataFrame) -> None:
@@ -228,11 +242,76 @@ def replace_table(table: str, frame: pd.DataFrame) -> None:
     with connection() as db:
         db.execute(f"DELETE FROM {table}")
         if not clean.empty:
-            placeholders = ",".join("?" for _ in clean.columns)
+            placeholder_marks = ",".join("?" for _ in clean.columns)
             db.executemany(
-                f"INSERT INTO {table} ({','.join(clean.columns)}) VALUES ({placeholders})",
+                placeholders(
+                    f"INSERT INTO {table} "
+                    f"({','.join(clean.columns)}) VALUES ({placeholder_marks})"
+                ),
                 clean.where(pd.notna(clean), None).itertuples(index=False, name=None),
             )
+
+
+def clean_bitcoin_transactions(frame: pd.DataFrame) -> pd.DataFrame:
+    """Verwijder lege regels en valideer Bitcoin-transacties vóór opslag."""
+    columns = ["trade_date", "amount_eur", "btc_amount", "note"]
+    clean = frame.copy()
+    for column in columns:
+        if column not in clean.columns:
+            clean[column] = None
+    clean = clean[columns]
+
+    for column in ("trade_date", "note"):
+        clean[column] = clean[column].astype("string").fillna("").str.strip()
+    for column in ("amount_eur", "btc_amount"):
+        clean[column] = pd.to_numeric(clean[column], errors="coerce")
+
+    completely_empty = (
+        clean["trade_date"].eq("")
+        & clean["amount_eur"].isna()
+        & clean["btc_amount"].isna()
+        & clean["note"].eq("")
+    )
+    clean = clean.loc[~completely_empty].copy()
+
+    if clean.empty:
+        return clean.reset_index(drop=True)
+
+    missing_date = clean["trade_date"].eq("")
+    if missing_date.any():
+        row_numbers = ", ".join(str(index + 1) for index in clean.index[missing_date])
+        raise ValueError(
+            "Vul bij iedere Bitcoin-transactie een datum in "
+            f"(ontbreekt in regel {row_numbers})."
+        )
+
+    invalid_dates: list[int] = []
+    normalized_dates: list[str] = []
+    for index, value in clean["trade_date"].items():
+        try:
+            normalized_dates.append(date.fromisoformat(str(value)).isoformat())
+        except ValueError:
+            invalid_dates.append(index + 1)
+            normalized_dates.append(str(value))
+    if invalid_dates:
+        row_numbers = ", ".join(str(number) for number in invalid_dates)
+        raise ValueError(
+            "Gebruik voor de datum het formaat JJJJ-MM-DD "
+            f"(controleer regel {row_numbers})."
+        )
+    clean["trade_date"] = normalized_dates
+
+    missing_amounts = clean["amount_eur"].isna() | clean["btc_amount"].isna()
+    if missing_amounts.any():
+        row_numbers = ", ".join(
+            str(index + 1) for index in clean.index[missing_amounts]
+        )
+        raise ValueError(
+            "Vul zowel de inleg als het aantal BTC in "
+            f"(controleer regel {row_numbers})."
+        )
+
+    return clean.reset_index(drop=True)
 
 
 def get_settings() -> dict[str, str]:
@@ -244,10 +323,10 @@ def get_settings() -> dict[str, str]:
 def set_settings(values: dict[str, object]) -> None:
     with connection() as db:
         db.executemany(
-            """
+            placeholders("""
             INSERT INTO settings(key,value) VALUES (?,?)
             ON CONFLICT(key) DO UPDATE SET value=excluded.value
-            """,
+            """),
             [(key, str(value)) for key, value in values.items()],
         )
 
@@ -260,10 +339,10 @@ def replace_balance_with_freedom_plan(net_cash: float, annuity_reserve: float) -
     with connection() as db:
         db.execute("DELETE FROM balance_items")
         db.executemany(
-            """
+            placeholders("""
             INSERT INTO balance_items(category,name,amount,item_type)
             VALUES (?,?,?,?)
-            """,
+            """),
             [
                 ("Project Vrijheid", "Netto cash na verkoop", net_cash, "asset"),
                 ("Project Vrijheid", "Stakingslijfrente", annuity_reserve, "asset"),
@@ -272,16 +351,49 @@ def replace_balance_with_freedom_plan(net_cash: float, annuity_reserve: float) -
 
 
 def create_backup() -> Path:
-    """Create a timestamped copy of the SQLite database next to the app."""
+    """Maak een herstelbare back-up voor de actieve databaseprovider."""
     from datetime import datetime
+    import json
     import shutil
 
     backup_dir = Path(__file__).with_name("backups")
     backup_dir.mkdir(exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    target = backup_dir / f"project_vrijheid_{stamp}.db"
-    shutil.copy2(DB_PATH, target)
-    return target
+    if backend_name() == "sqlite":
+        target = backup_dir / f"project_vrijheid_{stamp}.db"
+        shutil.copy2(DB_PATH, target)
+        return target
+
+    export_dir = backup_dir / f"geertos_cloud_{stamp}"
+    export_dir.mkdir()
+    tables = [
+        "settings",
+        "balance_items",
+        "etf_positions",
+        "bitcoin_transactions",
+        "expenses",
+        "family_members",
+        "opa_funds",
+        "opa_transactions",
+    ]
+    manifest: dict[str, object] = {
+        "created_at": datetime.now().isoformat(),
+        "provider": backend_name(),
+        "tables": {},
+    }
+    with connection() as db:
+        for table in tables:
+            frame = pd.DataFrame(
+                rows_as_dicts(db.execute(f"SELECT * FROM {table} ORDER BY 1"))
+            )
+            frame.to_csv(export_dir / f"{table}.csv", index=False)
+            manifest["tables"][table] = len(frame)
+    (export_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    archive = shutil.make_archive(str(export_dir), "zip", export_dir)
+    shutil.rmtree(export_dir)
+    return Path(archive)
 
 
 def add_opa_transaction(child_name: str, transaction_date: str, amount: float, note: str = "") -> None:
@@ -292,7 +404,10 @@ def add_opa_transaction(child_name: str, transaction_date: str, amount: float, n
         raise ValueError("Het bedrag mag niet nul zijn.")
     with connection() as db:
         db.execute(
-            """INSERT INTO opa_transactions(child_name,transaction_date,amount,note)
-               VALUES (?,?,?,?)""",
+            placeholders(
+                """INSERT INTO opa_transactions(
+                       child_name,transaction_date,amount,note
+                   ) VALUES (?,?,?,?)"""
+            ),
             (child_name.strip(), transaction_date, float(amount), note.strip()),
         )
