@@ -287,8 +287,7 @@ def replace_table(
     columns = allowed.get(table)
     if not columns:
         raise ValueError("Unknown table")
-    clean = frame.copy()
-    clean = clean[[c for c in columns if c in clean.columns]]
+    clean = validate_table(table, frame)
     with connection() as db:
         now = datetime.now(UTC).isoformat()
         if expected_version is None:
@@ -329,6 +328,111 @@ def replace_table(
                 ),
                 clean.where(pd.notna(clean), None).itertuples(index=False, name=None),
             )
+
+
+def _normalize_date(value: object, label: str, *, optional: bool = False) -> str:
+    text = str(value or "").strip()
+    if not text and optional:
+        return ""
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError as exc:
+        raise ValueError(f"{label}: gebruik een geldige datum (JJJJ-MM-DD).") from exc
+
+
+def _required_text(frame: pd.DataFrame, columns: list[str]) -> None:
+    for column in columns:
+        frame[column] = frame[column].astype("string").fillna("").str.strip()
+        if frame[column].eq("").any():
+            raise ValueError(f"Vul het verplichte veld '{column}' in.")
+
+
+def _numeric(
+    frame: pd.DataFrame,
+    columns: list[str],
+    *,
+    allow_zero: bool = True,
+    allow_negative: bool = False,
+) -> None:
+    for column in columns:
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+        if frame[column].isna().any():
+            raise ValueError(f"Vul bij '{column}' een geldig getal in.")
+        if not allow_negative and frame[column].lt(0).any():
+            raise ValueError(f"'{column}' mag niet negatief zijn.")
+        if not allow_zero and frame[column].eq(0).any():
+            raise ValueError(f"'{column}' mag niet nul zijn.")
+
+
+def validate_table(table: str, frame: pd.DataFrame) -> pd.DataFrame:
+    """Verwijder lege invoerregels en controleer alle tabellen vóór opslag."""
+    allowed = {
+        "balance_items": ["category", "name", "amount", "item_type"],
+        "etf_positions": ["name", "ticker", "invested", "value"],
+        "bitcoin_transactions": ["trade_date", "amount_eur", "btc_amount", "note"],
+        "expenses": ["category", "description", "monthly_amount"],
+        "family_members": ["name", "relationship", "birth_date", "notes"],
+        "opa_funds": [
+            "child_name", "birth_date", "target_amount", "expected_return_pct"
+        ],
+        "opa_transactions": ["child_name", "transaction_date", "amount", "note"],
+    }
+    columns = allowed.get(table)
+    if not columns:
+        raise ValueError("Onbekende tabel.")
+    clean = frame.copy()
+    for column in columns:
+        if column not in clean.columns:
+            clean[column] = None
+    clean = clean[columns]
+    empty = clean.apply(
+        lambda row: all(
+            pd.isna(value) or str(value).strip() == "" for value in row
+        ),
+        axis=1,
+    )
+    clean = clean.loc[~empty].copy().reset_index(drop=True)
+    if clean.empty:
+        return clean
+
+    if table == "bitcoin_transactions":
+        return clean_bitcoin_transactions(clean)
+    if table == "balance_items":
+        _required_text(clean, ["category", "name", "item_type"])
+        _numeric(clean, ["amount"])
+        if not clean["item_type"].isin({"asset", "liability"}).all():
+            raise ValueError("Type moet 'asset' of 'liability' zijn.")
+    elif table == "etf_positions":
+        _required_text(clean, ["name", "ticker"])
+        _numeric(clean, ["invested", "value"])
+    elif table == "expenses":
+        _required_text(clean, ["category", "description"])
+        _numeric(clean, ["monthly_amount"])
+    elif table == "family_members":
+        _required_text(clean, ["name", "relationship"])
+        clean["notes"] = clean["notes"].astype("string").fillna("").str.strip()
+        clean["birth_date"] = [
+            _normalize_date(value, "Geboortedatum", optional=True)
+            for value in clean["birth_date"]
+        ]
+    elif table == "opa_funds":
+        _required_text(clean, ["child_name"])
+        clean["birth_date"] = [
+            _normalize_date(value, "Geboortedatum") for value in clean["birth_date"]
+        ]
+        _numeric(clean, ["target_amount"], allow_zero=False)
+        _numeric(clean, ["expected_return_pct"], allow_negative=True)
+        if clean["expected_return_pct"].abs().gt(100).any():
+            raise ValueError("Verwacht rendement moet tussen -100% en 100% liggen.")
+    elif table == "opa_transactions":
+        _required_text(clean, ["child_name"])
+        clean["note"] = clean["note"].astype("string").fillna("").str.strip()
+        clean["transaction_date"] = [
+            _normalize_date(value, "Transactiedatum")
+            for value in clean["transaction_date"]
+        ]
+        _numeric(clean, ["amount"], allow_zero=False, allow_negative=True)
+    return clean.reset_index(drop=True)
 
 
 def clean_bitcoin_transactions(frame: pd.DataFrame) -> pd.DataFrame:
@@ -483,7 +587,47 @@ def create_backup() -> Path:
     )
     archive = shutil.make_archive(str(export_dir), "zip", export_dir)
     shutil.rmtree(export_dir)
-    return Path(archive)
+    target = Path(archive)
+    validate_backup(target)
+    return target
+
+
+def validate_backup(archive: Path) -> dict[str, object]:
+    """Controleer of een cloudback-up compleet en leesbaar is."""
+    import csv
+    import json
+    import zipfile
+
+    required = {
+        "settings",
+        "balance_items",
+        "etf_positions",
+        "bitcoin_transactions",
+        "expenses",
+        "family_members",
+        "opa_funds",
+        "opa_transactions",
+        "sync_state",
+    }
+    if not archive.exists() or archive.stat().st_size == 0:
+        raise ValueError("De back-up bestaat niet of is leeg.")
+    with zipfile.ZipFile(archive) as zipped:
+        names = set(zipped.namelist())
+        if "manifest.json" not in names:
+            raise ValueError("De back-up bevat geen manifest.")
+        manifest = json.loads(zipped.read("manifest.json"))
+        if set(manifest.get("tables", {})) != required:
+            raise ValueError("De back-up bevat niet alle vereiste tabellen.")
+        for table, expected_count in manifest["tables"].items():
+            filename = f"{table}.csv"
+            if filename not in names:
+                raise ValueError(f"De tabel {table} ontbreekt in de back-up.")
+            rows = list(
+                csv.reader(zipped.read(filename).decode("utf-8-sig").splitlines())
+            )
+            if max(0, len(rows) - 1) != int(expected_count):
+                raise ValueError(f"De tabel {table} is onvolledig in de back-up.")
+    return manifest
 
 
 def add_opa_transaction(child_name: str, transaction_date: str, amount: float, note: str = "") -> None:

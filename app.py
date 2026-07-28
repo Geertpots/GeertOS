@@ -28,6 +28,7 @@ from database import (
     replace_table,
     set_settings,
     create_backup,
+    validate_backup,
     add_opa_transaction,
     clean_bitcoin_transactions,
 )
@@ -42,7 +43,14 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 require_access()
-init_db()
+try:
+    init_db()
+except Exception:
+    st.error(
+        "GeertOS kan de centrale database nu niet bereiken. "
+        "Je gegevens zijn niet gewijzigd. Probeer het over enkele minuten opnieuw."
+    )
+    st.stop()
 settings = get_settings()
 
 if "_sync_notice" in st.session_state:
@@ -53,13 +61,17 @@ def save_synced_table(
     table: str,
     frame: pd.DataFrame,
     expected_version: int,
-) -> None:
+) -> bool:
     """Sla centraal op en herlaad veilig bij een gelijktijdige wijziging."""
     try:
         replace_table(table, frame, expected_version=expected_version)
     except SyncConflictError as exc:
         st.session_state["_sync_notice"] = str(exc)
         st.rerun()
+    except ValueError as exc:
+        st.error(str(exc))
+        return False
+    return True
 
 
 def number(key: str, default: float = 0.0) -> float:
@@ -127,7 +139,7 @@ st.markdown(css(dark_mode), unsafe_allow_html=True)
 
 st.sidebar.markdown("## 🟦 GeertOS")
 st.sidebar.caption("Freedom Edition · financiële cockpit")
-st.sidebar.success("✅ Sprint 8C · Centrale rekenmotor actief")
+st.sidebar.success("✅ Sprint 8D · Stabiliteit en beveiliging actief")
 if access_control_enabled():
     st.sidebar.caption("🔒 Toegangscode actief")
 else:
@@ -403,9 +415,9 @@ def balance_page() -> None:
         key="balance_editor",
     )
     if st.button("Balans opslaan", type="primary"):
-        save_synced_table("balance_items", edited, sync_version)
-        st.success("Balans opgeslagen.")
-        st.rerun()
+        if save_synced_table("balance_items", edited, sync_version):
+            st.success("Balans opgeslagen.")
+            st.rerun()
 
 
 def etf_page() -> None:
@@ -466,10 +478,10 @@ def etf_page() -> None:
         key="etf_editor",
     )
     if st.button("ETF-portefeuille opslaan", type="primary"):
-        save_synced_table("etf_positions", edited, sync_version)
-        set_settings({"etf_start": float(edited["value"].sum())})
-        st.success("ETF-portefeuille opgeslagen.")
-        st.rerun()
+        if save_synced_table("etf_positions", edited, sync_version):
+            set_settings({"etf_start": float(edited["value"].sum())})
+            st.success("ETF-portefeuille opgeslagen.")
+            st.rerun()
 
 
 def bitcoin_page() -> None:
@@ -523,12 +535,13 @@ def bitcoin_page() -> None:
         except ValueError as exc:
             st.error(str(exc))
         else:
-            save_synced_table(
+            saved = save_synced_table(
                 "bitcoin_transactions", clean_transactions, sync_version
             )
-            set_settings({"bitcoin_current_price": current_price})
-            st.success("Bitcoin-portefeuille opgeslagen.")
-            st.rerun()
+            if saved:
+                set_settings({"bitcoin_current_price": current_price})
+                st.success("Bitcoin-portefeuille opgeslagen.")
+                st.rerun()
 
 
 def pension_page() -> None:
@@ -958,9 +971,9 @@ def expenses_page() -> None:
         key="expense_editor",
     )
     if st.button("Uitgaven opslaan", type="primary"):
-        save_synced_table("expenses", edited, sync_version)
-        st.success("Uitgaven opgeslagen.")
-        st.rerun()
+        if save_synced_table("expenses", edited, sync_version):
+            st.success("Uitgaven opgeslagen.")
+            st.rerun()
 
     if not frame.empty and total:
         fig = px.treemap(
@@ -1065,6 +1078,38 @@ def settings_page() -> None:
         })
         st.success("Uitgangspunten opgeslagen.")
         st.rerun()
+
+    st.divider()
+    st.subheader("Back-up en herstel")
+    st.caption(
+        "Maak een volledige, gecontroleerde export van alle cloudgegevens. "
+        "Bewaar het ZIP-bestand op je eigen computer of in je persoonlijke cloudmap."
+    )
+    if st.button("Maak gecontroleerde back-up", use_container_width=True):
+        try:
+            backup = create_backup()
+            manifest = validate_backup(backup)
+            st.session_state["verified_backup_name"] = backup.name
+            st.session_state["verified_backup_data"] = backup.read_bytes()
+            st.session_state["verified_backup_tables"] = len(manifest["tables"])
+        except Exception:
+            st.error(
+                "De back-up kon niet veilig worden afgerond. "
+                "Er zijn geen gegevens gewijzigd."
+            )
+        else:
+            st.success(
+                f"Back-up gecontroleerd: {len(manifest['tables'])} tabellen zijn compleet."
+            )
+
+    if st.session_state.get("verified_backup_data"):
+        st.download_button(
+            "Download laatste gecontroleerde back-up",
+            data=st.session_state["verified_backup_data"],
+            file_name=st.session_state["verified_backup_name"],
+            mime="application/zip",
+            use_container_width=True,
+        )
 
 
 
@@ -1303,9 +1348,9 @@ def family_page() -> None:
         key="family_editor",
     )
     if st.button("Familiegegevens opslaan", type="primary"):
-        save_synced_table("family_members", edited, sync_version)
-        st.success("Familiegegevens opgeslagen.")
-        st.rerun()
+        if save_synced_table("family_members", edited, sync_version):
+            st.success("Familiegegevens opgeslagen.")
+            st.rerun()
 
 
 def opa_fund_page() -> None:
@@ -1382,9 +1427,9 @@ def opa_fund_page() -> None:
         key="opa_funds_editor",
     )
     if st.button("Opa-fonds instellingen opslaan"):
-        save_synced_table("opa_funds", edited_funds, funds_sync_version)
-        st.success("Instellingen opgeslagen.")
-        st.rerun()
+        if save_synced_table("opa_funds", edited_funds, funds_sync_version):
+            st.success("Instellingen opgeslagen.")
+            st.rerun()
 
     st.subheader("Stortingsgeschiedenis")
     if transactions.empty:
