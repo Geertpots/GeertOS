@@ -10,19 +10,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from calculations import (
-    annuity_schedule,
     money,
-    monthly_income_projection,
     net_worth,
     portfolio_summary,
-    sale_scenario,
-    sale_scenario_table,
-    freedom_index,
-    projection_health,
-    stress_test_income_plan,
     monte_carlo_income_plan,
     decision_label,
 )
+from financial_engine import FinancialEngine
 from database import (
     SyncConflictError,
     backend_name,
@@ -104,32 +98,23 @@ def chart_layout(fig: go.Figure, dark: bool, height: int = 370) -> go.Figure:
     return fig
 
 
-def make_annuity() -> pd.DataFrame:
-    return annuity_schedule(
-        number("annuity_principal", 250000),
-        integer("annuity_years", 15),
-        number("annuity_return_pct", 2.5),
-        number("annuity_tax_pct", 37),
-        date.today().year,
+def make_engine() -> FinancialEngine:
+    """Laad één consistente cloudmomentopname voor de centrale rekenmotor."""
+    return FinancialEngine(
+        settings,
+        balance_items=read_table("balance_items"),
+        etf_positions=read_table("etf_positions"),
+        bitcoin_transactions=read_table("bitcoin_transactions"),
+        expenses=read_table("expenses"),
     )
+
+
+def make_annuity() -> pd.DataFrame:
+    return make_engine().evaluate().annuity
 
 
 def make_projection() -> pd.DataFrame:
-    birth = date.fromisoformat(settings.get("birth_date", "1964-12-21"))
-    return monthly_income_projection(
-        birth_date=birth,
-        start_year=date.today().year,
-        end_year=integer("calculation_end_year", 2047),
-        target_monthly=number("target_monthly", 4000),
-        inflation_pct=number("inflation_pct", 2.5),
-        etf_start=number("etf_start", 500000),
-        etf_return_pct=number("etf_return_pct", 4),
-        annuity=make_annuity(),
-        own_pension_monthly=number("own_pension_monthly", 145),
-        partner_pension_monthly=number("partner_pension_monthly", 350),
-        aow_combined_monthly=number("aow_combined_monthly", 2000),
-        side_income_monthly=number("side_income_monthly", 1500),
-    )
+    return make_engine().evaluate().projection
 
 
 dark_mode = st.sidebar.toggle(
@@ -142,7 +127,7 @@ st.markdown(css(dark_mode), unsafe_allow_html=True)
 
 st.sidebar.markdown("## 🟦 GeertOS")
 st.sidebar.caption("Freedom Edition · financiële cockpit")
-st.sidebar.success("✅ Sprint 8B · Cloud-synchronisatie actief")
+st.sidebar.success("✅ Sprint 8C · Centrale rekenmotor actief")
 if access_control_enabled():
     st.sidebar.caption("🔒 Toegangscode actief")
 else:
@@ -245,44 +230,39 @@ def dashboard() -> None:
         "Jouw financiële cockpit: verkoop, vermogen, inkomen en toekomst in één overzicht.",
     )
 
-    balance = read_table("balance_items")
-    assets = float(balance.loc[balance["item_type"] == "asset", "amount"].sum())
-    debts = float(balance.loc[balance["item_type"] == "liability", "amount"].sum())
-    current_net_worth = assets - debts
-    etf = portfolio_summary(read_table("etf_positions"))
-    bitcoin = read_table("bitcoin_transactions")
-    total_btc = float(bitcoin["btc_amount"].sum()) if not bitcoin.empty else 0.0
-    bitcoin_price = number("bitcoin_current_price", 60000)
-    bitcoin_value = total_btc * bitcoin_price
-    projection = make_projection()
-    annuity = make_annuity()
-    annuity_monthly = (
-        float(annuity.iloc[0]["net_monthly"]) if not annuity.empty else 0.0
+    engine = make_engine()
+    base_price = number("sale_property_price", 1595000)
+    scenario_price = float(
+        st.session_state.get("dashboard_sale_price", base_price)
     )
-    pension_monthly = (
-        number("own_pension_monthly", 145)
-        + number("partner_pension_monthly", 350)
-        + number("aow_combined_monthly", 2000)
-    )
+    result = engine.evaluate({"sale_property_price": scenario_price})
+    projection = result.projection
 
     st.markdown(
         '<div class="pv-section-title">Financiële positie</div>',
         unsafe_allow_html=True,
     )
     a, b, c, d = st.columns(4)
-    a.metric("Netto vermogen", money(current_net_worth))
-    b.metric("ETF-portefeuille", money(etf["value"]), f"{etf['return_pct']:.1f}%")
-    c.metric("Bitcoin-portefeuille", money(bitcoin_value), f"{total_btc:.6f} BTC")
+    a.metric("Netto vermogen na verkoop", money(result.post_sale_net_worth))
+    b.metric(
+        "ETF-portefeuille",
+        money(result.etf["value"]),
+        f"{result.etf['return_pct']:.1f}%",
+    )
+    c.metric(
+        "Bitcoin-portefeuille",
+        money(result.bitcoin_value),
+        f"{result.bitcoin_amount:.6f} BTC",
+    )
     d.metric(
         "Pensioen + lijfrente p/m",
-        money(pension_monthly + annuity_monthly),
+        money(result.pension_monthly + result.annuity_monthly),
     )
 
     st.markdown(
         '<div class="pv-section-title">Verkoopscenario POTZ WONEN</div>',
         unsafe_allow_html=True,
     )
-    base_price = number("sale_property_price", 1595000)
     scenario_price = st.slider(
         "Verkoopprijs pand",
         min_value=1300000,
@@ -293,20 +273,7 @@ def dashboard() -> None:
         help="Schuif om direct te zien wat een andere verkoopprijs betekent.",
         key="dashboard_sale_price",
     )
-    sale = sale_scenario(
-        scenario_price,
-        number("sale_property_book", 885000),
-        number("sale_inventory_price", 275000),
-        number("sale_inventory_book", 335000),
-        number("sale_mortgage", 675000),
-        number("sale_business_credit", 100000),
-        number("sale_brokerage_pct", 1.75),
-        number("sale_tax_pct", 25.8),
-        number("sale_annuity_reserve", 250000),
-        other_loans=number("sale_other_loans", 125000),
-        brokerage_vat_pct=number("sale_brokerage_vat_pct", 21),
-        other_sale_costs=number("sale_other_costs", 0),
-    )
+    sale = result.sale
     a, b, c, d = st.columns(4)
     a.metric("Verkoopprijs pand", money(scenario_price))
     b.metric("Bruto verkoop", money(sale["gross"]))
@@ -613,7 +580,8 @@ def pension_page() -> None:
             st.success("Pensioeninstellingen opgeslagen.")
             st.rerun()
 
-    projection = make_projection()
+    plan = make_engine().evaluate()
+    projection = plan.projection
     sources = projection[["year", "aow", "pension", "side_income"]].melt(
         "year", var_name="source", value_name="amount"
     )
@@ -737,7 +705,8 @@ def income_page() -> None:
             st.success("Inkomensplan opgeslagen.")
             st.rerun()
 
-    projection = make_projection()
+    plan = make_engine().evaluate()
+    projection = plan.projection
     long = projection.melt(
         id_vars=["year"],
         value_vars=["annuity", "aow", "pension", "side_income", "etf_withdrawal"],
@@ -882,20 +851,22 @@ def freedom_page() -> None:
         )
         st.success("Project Vrijheid is opgeslagen.")
 
-    result = sale_scenario(
-        property_price,
-        property_book,
-        inventory_price,
-        inventory_book,
-        mortgage,
-        credit,
-        brokerage,
-        tax,
-        annuity_reserve,
-        other_loans=other_loans,
-        brokerage_vat_pct=brokerage_vat,
-        other_sale_costs=other_costs,
-    )
+    engine = make_engine()
+    sale_overrides = {
+        "sale_property_price": property_price,
+        "sale_property_book": property_book,
+        "sale_inventory_price": inventory_price,
+        "sale_inventory_book": inventory_book,
+        "sale_mortgage": mortgage,
+        "sale_business_credit": credit,
+        "sale_other_loans": other_loans,
+        "sale_brokerage_pct": brokerage,
+        "sale_brokerage_vat_pct": brokerage_vat,
+        "sale_other_costs": other_costs,
+        "sale_tax_pct": tax,
+        "sale_annuity_reserve": annuity_reserve,
+    }
+    result = engine.evaluate(sale_overrides).sale
 
     st.subheader("Uitkomst")
     a, b, c, d = st.columns(4)
@@ -936,10 +907,8 @@ def freedom_page() -> None:
     st.subheader("Verkoopprijs pand vergelijken")
     scenarios = []
     for price in range(1300000, 1700001, 25000):
-        item = sale_scenario(
-            price, property_book, inventory_price, inventory_book, mortgage, credit,
-            brokerage, tax, annuity_reserve, other_loans=other_loans,
-            brokerage_vat_pct=brokerage_vat, other_sale_costs=other_costs,
+        item = engine.sale_result(
+            {**sale_overrides, "sale_property_price": price}
         )
         scenarios.append({"Verkoopprijs pand": price, "Netto cash": item["net_cash"]})
     scenario_frame = pd.DataFrame(scenarios)
@@ -1017,20 +986,7 @@ def scenario_analysis_page() -> None:
     expected = c2.number_input("Verwacht", min_value=0.0, value=base_price, step=25000.0)
     high = c3.number_input("Optimistisch", min_value=0.0, value=base_price + 105000, step=25000.0)
 
-    frame = sale_scenario_table(
-        [low, expected, high],
-        property_book_value=number("sale_property_book", 885000),
-        inventory_price=number("sale_inventory_price", 275000),
-        inventory_book_value=number("sale_inventory_book", 335000),
-        mortgage=number("sale_mortgage", 675000),
-        business_credit=number("sale_business_credit", 100000),
-        brokerage_pct=number("sale_brokerage_pct", 1.75),
-        tax_pct=number("sale_tax_pct", 25.8),
-        annuity_reserve=number("sale_annuity_reserve", 250000),
-        other_loans=number("sale_other_loans", 125000),
-        brokerage_vat_pct=number("sale_brokerage_vat_pct", 21),
-        other_sale_costs=number("sale_other_costs", 0),
-    )
+    frame = make_engine().scenario_table([low, expected, high])
     frame.insert(0, "scenario", ["Voorzichtig", "Verwacht", "Optimistisch"])
     goal = number("sale_net_cash_goal", 600000)
     frame["difference_to_goal"] = frame["net_cash"] - goal
@@ -1117,8 +1073,10 @@ def plan_check_page() -> None:
         "Plancontrole",
         "Toets je inkomensplan op haalbaarheid en vergelijk meerdere rendementsscenario’s.",
     )
-    projection = make_projection()
-    health = projection_health(projection)
+    engine = make_engine()
+    plan = engine.evaluate()
+    projection = plan.projection
+    health = plan.projection_health
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Plan volledig gedekt", "Ja" if health["funded"] else "Nee")
@@ -1137,21 +1095,7 @@ def plan_check_page() -> None:
             f"{int(health['first_shortfall_year'])}."
         )
 
-    birth = date.fromisoformat(settings.get("birth_date", "1964-12-21"))
-    stress = stress_test_income_plan(
-        birth_date=birth,
-        start_year=date.today().year,
-        end_year=integer("calculation_end_year", 2047),
-        target_monthly=number("target_monthly", 4000),
-        inflation_pct=number("inflation_pct", 2.5),
-        etf_start=number("etf_start", 500000),
-        annuity=make_annuity(),
-        own_pension_monthly=number("own_pension_monthly", 145),
-        partner_pension_monthly=number("partner_pension_monthly", 350),
-        aow_combined_monthly=number("aow_combined_monthly", 2000),
-        side_income_monthly=number("side_income_monthly", 1500),
-        return_scenarios=(2.0, 4.0, 6.0),
-    )
+    stress = engine.stress_table((2.0, 4.0, 6.0))
     stress["Scenario"] = stress["return_pct"].map(
         {2.0: "Voorzichtig", 4.0: "Verwacht", 6.0: "Gunstig"}
     )
@@ -1243,10 +1187,11 @@ def decision_lab_page() -> None:
         )
         run = st.form_submit_button("Bereken beslissing", type="primary")
 
-    projection = make_projection()
+    plan = make_engine().evaluate()
+    projection = plan.projection
     summary, path = monte_carlo_income_plan(
         projection,
-        starting_capital=number("etf_start", 500000),
+        starting_capital=plan.planned_etf_start,
         expected_return_pct=expected_return,
         volatility_pct=volatility,
         simulations=int(simulations),
