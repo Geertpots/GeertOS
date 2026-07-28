@@ -41,6 +41,29 @@ def css(dark: bool) -> str:
     }}
     .pv-hero h1 {{ margin: .3rem 0 .15rem; font-size: clamp(1.8rem, 4vw, 3rem); }}
     .pv-hero p {{ color: var(--pv-muted) !important; margin: 0; }}
+    .pv-today-hero {{
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 1.25rem; padding: 1.5rem 1.65rem;
+        border: 1px solid var(--pv-border); border-radius: 20px;
+        margin: .25rem 0 1.3rem;
+        background: linear-gradient(135deg, var(--pv-panel), rgba(32,201,151,.10));
+    }}
+    .pv-today-hero h1 {{
+        margin: .3rem 0 .15rem; font-size: clamp(1.8rem, 4vw, 3rem);
+    }}
+    .pv-today-hero p {{ color: var(--pv-muted) !important; margin: 0; }}
+    .pv-status {{
+        display: flex; flex-direction: column; min-width: 15rem;
+        padding: .85rem 1rem; border-radius: 14px;
+        border: 1px solid var(--pv-border); background: var(--pv-panel);
+    }}
+    .pv-status span {{ font-size: 1.05rem; font-weight: 800; }}
+    .pv-status small {{
+        color: var(--pv-muted); margin-top: .25rem; line-height: 1.35;
+    }}
+    .pv-status-good {{ border-left: 5px solid var(--pv-green); }}
+    .pv-status-attention {{ border-left: 5px solid var(--pv-gold); }}
+    .pv-status-action {{ border-left: 5px solid var(--pv-red); }}
     [data-testid="stMetric"] {{
         background: var(--pv-panel); border: 1px solid var(--pv-border);
         padding: 1rem 1.1rem; border-radius: 16px;
@@ -77,6 +100,15 @@ def css(dark: bool) -> str:
             overflow-x: hidden;
         }}
         .pv-hero {{ padding: 1.1rem; border-radius: 15px; }}
+        .pv-today-hero {{
+            align-items: stretch; flex-direction: column;
+            padding: 1.1rem; border-radius: 15px;
+        }}
+        .pv-today-hero h1 {{
+            font-size: clamp(1.65rem, 8vw, 2.15rem);
+            line-height: 1.15;
+        }}
+        .pv-status {{ min-width: 0; width: 100%; }}
         .pv-hero h1 {{
             font-size: clamp(1.65rem, 8vw, 2.15rem);
             line-height: 1.15;

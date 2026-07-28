@@ -18,6 +18,7 @@ from calculations import (
     decision_label,
 )
 from financial_engine import FinancialEngine
+from cockpit import daily_insights, greeting, plan_status
 from database import (
     SyncConflictError,
     backend_name,
@@ -144,9 +145,10 @@ if access_control_enabled():
     st.sidebar.caption("🔒 Toegangscode actief")
 else:
     st.sidebar.caption("💻 Alleen lokaal · geen toegangscode ingesteld")
-st.sidebar.success("Sprint 9 · Persoonlijke financiële waarheid actief")
+st.sidebar.success("Sprint 10A · Intelligente cockpit actief")
 st.sidebar.caption(f"Bronmap: {__file__}")
 PAGES = [
+    "Vandaag",
     "Dashboard",
     "Persoonlijke waarheid",
     "Familie",
@@ -165,7 +167,32 @@ PAGES = [
     "Grafieken",
     "Mijn uitgangspunten",
 ]
-page = st.sidebar.radio("Navigatie", PAGES, label_visibility="collapsed")
+NAVIGATION_LABELS = {
+    "Vandaag": "🏠 Vandaag",
+    "Dashboard": "🏠 Financieel dashboard",
+    "Persoonlijke waarheid": "🔎 Controle · Persoonlijke waarheid",
+    "Familie": "👨‍👩‍👧 Familie · Overzicht",
+    "Opa-fonds": "👨‍👩‍👧 Familie · Opa-fonds",
+    "Project Vrijheid": "🎯 Vrijheid · Project Vrijheid",
+    "Netto vermogen": "💰 Vermogen · Netto vermogen",
+    "ETF-portefeuille": "📈 Beleggingen · ETF",
+    "Bitcoin-portefeuille": "📈 Beleggingen · Bitcoin",
+    "Pensioenplanning": "🏦 Pensioen · Pensioenplanning",
+    "Lijfrenteplanning": "🏦 Pensioen · Lijfrenteplanning",
+    "Netto maandinkomen": "🎯 Vrijheid · Netto maandinkomen",
+    "Uitgavenplanner": "💰 Vermogen · Uitgavenplanner",
+    "Scenarioanalyse": "📊 Analyse · Scenarioanalyse",
+    "Plancontrole": "📊 Analyse · Plancontrole",
+    "Beslislab": "📊 Analyse · Beslislab",
+    "Grafieken": "📊 Analyse · Grafieken",
+    "Mijn uitgangspunten": "⚙️ Instellingen · Uitgangspunten",
+}
+page = st.sidebar.selectbox(
+    "Ga naar",
+    PAGES,
+    format_func=lambda item: NAVIGATION_LABELS[item],
+    key="main_navigation",
+)
 st.sidebar.divider()
 if backend_name() == "postgresql":
     st.sidebar.caption("Cloud actief · laptop en iPhone gebruiken dezelfde gegevens")
@@ -236,6 +263,139 @@ def opa_summary() -> pd.DataFrame:
             "return_pct": float(item["expected_return_pct"] or 0),
         })
     return pd.DataFrame(rows)
+
+
+def navigate_to(destination: str) -> None:
+    """Open een bestaande GeertOS-module via de centrale navigatie."""
+    st.session_state["main_navigation"] = destination
+
+
+def today_page() -> None:
+    """Centrale dagelijkse cockpit, gevoed door één financiële momentopname."""
+    now = datetime.now()
+    result = make_engine().evaluate()
+    projection = result.projection
+    first_year = projection.iloc[0]
+    status = plan_status(result, settings)
+    insights = daily_insights(result, settings)
+
+    day_names = [
+        "maandag", "dinsdag", "woensdag", "donderdag",
+        "vrijdag", "zaterdag", "zondag",
+    ]
+    month_names = [
+        "januari", "februari", "maart", "april", "mei", "juni",
+        "juli", "augustus", "september", "oktober", "november", "december",
+    ]
+    date_label = (
+        f"{day_names[now.weekday()]} {now.day} "
+        f"{month_names[now.month - 1]} {now.year}"
+    )
+
+    st.markdown(
+        f"""
+        <div class="pv-today-hero">
+          <div>
+            <div class="pv-kicker">GeertOS · Vandaag</div>
+            <h1>{greeting(now)} Geert</h1>
+            <p>{date_label} · bijgewerkt om {now:%H:%M}</p>
+          </div>
+          <div class="pv-status pv-status-{status['level']}">
+            <span>{status['label']}</span>
+            <small>{status['message']}</small>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="pv-section-title">Hoe je er vandaag voor staat</div>',
+        unsafe_allow_html=True,
+    )
+    a, b, c, d = st.columns(4)
+    a.metric("Netto vermogen na verkoop", money(result.post_sale_net_worth))
+    b.metric(
+        f"Netto inkomen {int(first_year['year'])}",
+        money(float(first_year["actual"])),
+        "per maand",
+    )
+    c.metric("ETF-portefeuille", money(result.etf["value"]))
+    d.metric("Bitcoin-portefeuille", money(result.bitcoin_value))
+
+    a, b, c = st.columns(3)
+    a.metric(
+        "Pensioen + lijfrente",
+        money(result.pension_monthly + result.annuity_monthly),
+        "per maand",
+    )
+    b.metric("Netto cash bij verkoop", money(result.sale["net_cash"]))
+    c.metric(
+        "Verwacht ETF-restvermogen 2047",
+        money(float(result.projection_health["end_balance"])),
+    )
+
+    st.markdown(
+        '<div class="pv-section-title">Voortgang financiële vrijheid</div>',
+        unsafe_allow_html=True,
+    )
+    score = max(0, min(100, int(result.freedom_score)))
+    st.progress(score / 100, text=f"Vrijheidsstatus: {score}%")
+    with st.expander("Hoe wordt deze status bepaald?"):
+        st.write(
+            "De status gebruikt uitsluitend de centrale GeertOS-berekeningen: "
+            "je werkelijke uitgaven, gewenste maandinkomen, resterend vermogen "
+            "in 2047 en de verhouding tot het geplande startvermogen."
+        )
+        st.caption(
+            "Dit is een planningsindicator en geen garantie of zelfstandig financieel advies."
+        )
+
+    st.markdown(
+        '<div class="pv-section-title">Belangrijk vandaag</div>',
+        unsafe_allow_html=True,
+    )
+    for index, insight in enumerate(insights):
+        message = f"**{insight.title}**  \n{insight.message}"
+        getattr(st, insight.level)(message)
+        st.button(
+            f"Bekijk {insight.destination}",
+            key=f"today_insight_{index}",
+            on_click=navigate_to,
+            args=(insight.destination,),
+        )
+
+    st.markdown(
+        '<div class="pv-section-title">Direct naar</div>',
+        unsafe_allow_html=True,
+    )
+    quick_links = [
+        ("🎯", "Project Vrijheid"),
+        ("💰", "Netto vermogen"),
+        ("📈", "ETF-portefeuille"),
+        ("🏦", "Pensioenplanning"),
+        ("👨‍👩‍👧", "Familie"),
+        ("👴", "Opa-fonds"),
+        ("📊", "Plancontrole"),
+        ("🔎", "Persoonlijke waarheid"),
+    ]
+    for start in range(0, len(quick_links), 4):
+        columns = st.columns(4)
+        for column, (icon, destination) in zip(
+            columns, quick_links[start:start + 4]
+        ):
+            column.button(
+                f"{icon} {destination}",
+                key=f"today_link_{destination}",
+                use_container_width=True,
+                on_click=navigate_to,
+                args=(destination,),
+            )
+
+    st.caption(
+        "Alle bedragen op deze pagina komen uit dezelfde centrale rekenmotor "
+        "en dezelfde cloudgegevens als de bestaande Sprint 9-pagina’s."
+    )
 
 
 def dashboard() -> None:
@@ -1760,6 +1920,7 @@ def charts_page() -> None:
 
 
 ROUTES = {
+    "Vandaag": today_page,
     "Dashboard": dashboard,
     "Persoonlijke waarheid": personal_truth_page,
     "Familie": family_page,
