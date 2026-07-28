@@ -112,27 +112,40 @@ def answer_question(
             "Project Vrijheid",
         )
 
-    if "bitcoin" in text and ("daal" in text or "lager" in text):
+    bitcoin_down = "daal" in text or "lager" in text or "zakt" in text
+    bitcoin_up = (
+        "stijg" in text
+        or "hoger" in text
+        or "omhoog" in text
+        or "toeneemt" in text
+    )
+    if "bitcoin" in text and (bitcoin_down or bitcoin_up):
         percentage = _percentage(question)
         if percentage is None:
             return AdvisorAnswer(
                 "Bitcoin-scenario",
-                "Noem ook het percentage van de daling, bijvoorbeeld 20%.",
+                "Noem ook het percentage van de verandering, bijvoorbeeld 20%.",
                 "info",
                 (),
                 "Bitcoin-portefeuille",
             )
-        new_value = baseline.bitcoin_value * max(0.0, 1 - percentage / 100)
-        loss = baseline.bitcoin_value - new_value
+        factor = 1 + percentage / 100 if bitcoin_up else max(
+            0.0, 1 - percentage / 100
+        )
+        new_value = baseline.bitcoin_value * factor
+        difference = new_value - baseline.bitcoin_value
         percentage_label = f"{percentage:.1f}".replace(".", ",")
+        movement = "stijging" if bitcoin_up else "daling"
+        impact = "plus" if difference >= 0 else "min"
         return AdvisorAnswer(
             "Bitcoin-scenario",
-            f"Na een daling van {percentage_label}% is je Bitcoin naar schatting "
+            f"Na een {movement} van {percentage_label}% is je Bitcoin naar schatting "
             f"{money(new_value)} waard.",
-            "warning",
+            "success" if bitcoin_up else "warning",
             (
-                f"Waardedaling: {money(loss)}.",
-                f"Effect op het huidige netto vermogen: min {money(loss)}.",
+                f"Waardeverandering: {impact} {money(abs(difference))}.",
+                f"Effect op het huidige netto vermogen: {impact} "
+                f"{money(abs(difference))}.",
                 "De pensioenprojectie gebruikt Bitcoin niet als gegarandeerde financieringsbron.",
             ),
             "Bitcoin-portefeuille",

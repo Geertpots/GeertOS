@@ -29,6 +29,17 @@ def test_bitcoin_drop_is_explained_without_projecting_growth() -> None:
     assert any("pensioenprojectie" in item.lower() for item in answer.details)
 
 
+def test_bitcoin_rise_is_understood_too() -> None:
+    engine = sample_engine()
+    answer = answer_question(
+        "Wat als Bitcoin 20% stijgt?", engine, engine.settings
+    )
+
+    assert answer.title == "Bitcoin-scenario"
+    assert "stijging van 20,0%" in answer.message
+    assert answer.level == "success"
+
+
 def test_large_purchase_returns_a_planning_assessment() -> None:
     engine = sample_engine()
     answer = answer_question(
