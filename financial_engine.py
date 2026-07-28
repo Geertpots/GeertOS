@@ -31,6 +31,13 @@ def _integer(values: Mapping[str, object], key: str, default: int) -> int:
     return int(_number(values, key, float(default)))
 
 
+def _date_value(values: Mapping[str, object], key: str, default: date) -> date:
+    try:
+        return date.fromisoformat(str(values.get(key, default.isoformat())))
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass(frozen=True)
 class FinancialResult:
     """Alle onderling samenhangende uitkomsten van één financieel scenario."""
@@ -94,6 +101,12 @@ class FinancialEngine:
             other_loans=_number(values, "sale_other_loans", 125_000),
             brokerage_vat_pct=_number(values, "sale_brokerage_vat_pct", 21),
             other_sale_costs=_number(values, "sale_other_costs", 0),
+            sale_structure=str(values.get("sale_structure", "Privé/eenmanszaak")),
+            vpb_low_pct=_number(values, "sale_vpb_low_pct", 19),
+            vpb_high_pct=_number(values, "sale_vpb_high_pct", 25.8),
+            vpb_threshold=_number(values, "sale_vpb_threshold", 200_000),
+            box2_pct=_number(values, "sale_box2_pct", 31),
+            retain_in_bv=_number(values, "sale_retain_in_bv", 0),
         )
 
     def scenario_table(self, property_prices: list[float]) -> pd.DataFrame:
@@ -111,6 +124,12 @@ class FinancialEngine:
             other_loans=_number(values, "sale_other_loans", 125_000),
             brokerage_vat_pct=_number(values, "sale_brokerage_vat_pct", 21),
             other_sale_costs=_number(values, "sale_other_costs", 0),
+            sale_structure=str(values.get("sale_structure", "Privé/eenmanszaak")),
+            vpb_low_pct=_number(values, "sale_vpb_low_pct", 19),
+            vpb_high_pct=_number(values, "sale_vpb_high_pct", 25.8),
+            vpb_threshold=_number(values, "sale_vpb_threshold", 200_000),
+            box2_pct=_number(values, "sale_box2_pct", 31),
+            retain_in_bv=_number(values, "sale_retain_in_bv", 0),
         )
 
     def evaluate(
@@ -161,12 +180,15 @@ class FinancialEngine:
             + float(sale["net_cash"])
             - _number(values, "safety_buffer", 100_000),
         )
+        annuity_start = _date_value(
+            values, "annuity_start_date", date(self.today.year, 1, 1)
+        )
         annuity = annuity_schedule(
             principal=float(sale["annuity_reserve"]),
             years=_integer(values, "annuity_years", 15),
             annual_return_pct=_number(values, "annuity_return_pct", 2.5),
             tax_pct=_number(values, "annuity_tax_pct", 37),
-            start_year=self.today.year,
+            start_year=annuity_start.year,
         )
         projection = monthly_income_projection(
             birth_date=date.fromisoformat(
@@ -187,6 +209,16 @@ class FinancialEngine:
                 values, "aow_combined_monthly", 2_000
             ),
             side_income_monthly=_number(values, "side_income_monthly", 1_500),
+            aow_start_date=_date_value(
+                values, "aow_start_date", date(2032, 3, 21)
+            ),
+            own_pension_start_date=_date_value(
+                values, "own_pension_start_date", date(2032, 3, 21)
+            ),
+            partner_pension_start_date=_date_value(
+                values, "partner_pension_start_date", date(2032, 3, 21)
+            ),
+            annuity_start_date=annuity_start,
         )
         pension_monthly = (
             _number(values, "own_pension_monthly", 145)
@@ -244,5 +276,17 @@ class FinancialEngine:
                 values, "aow_combined_monthly", 2_000
             ),
             side_income_monthly=_number(values, "side_income_monthly", 1_500),
+            aow_start_date=_date_value(
+                values, "aow_start_date", date(2032, 3, 21)
+            ),
+            own_pension_start_date=_date_value(
+                values, "own_pension_start_date", date(2032, 3, 21)
+            ),
+            partner_pension_start_date=_date_value(
+                values, "partner_pension_start_date", date(2032, 3, 21)
+            ),
+            annuity_start_date=_date_value(
+                values, "annuity_start_date", date(self.today.year, 1, 1)
+            ),
             return_scenarios=return_scenarios,
         )

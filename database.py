@@ -27,6 +27,7 @@ SYNC_TABLES = (
     "family_members",
     "opa_funds",
     "opa_transactions",
+    "plan_actuals",
 )
 
 
@@ -54,7 +55,8 @@ def init_db() -> None:
                 category TEXT NOT NULL,
                 name TEXT NOT NULL,
                 amount NUMERIC NOT NULL DEFAULT 0,
-                item_type TEXT NOT NULL CHECK(item_type IN ('asset','liability'))
+                item_type TEXT NOT NULL CHECK(item_type IN ('asset','liability')),
+                owner_scope TEXT NOT NULL DEFAULT 'Privé'
             )
             """,
             f"""
@@ -110,6 +112,16 @@ def init_db() -> None:
                 note TEXT DEFAULT ''
             )
             """,
+            f"""
+            CREATE TABLE IF NOT EXISTS plan_actuals (
+                id {id_column},
+                period TEXT NOT NULL,
+                metric TEXT NOT NULL,
+                planned_amount NUMERIC NOT NULL DEFAULT 0,
+                actual_amount NUMERIC NOT NULL DEFAULT 0,
+                notes TEXT DEFAULT ''
+            )
+            """,
             """
             CREATE TABLE IF NOT EXISTS sync_state (
                 table_name TEXT PRIMARY KEY,
@@ -120,6 +132,21 @@ def init_db() -> None:
         ]
         for statement in statements:
             db.execute(statement)
+        balance_cursor = db.execute("SELECT * FROM balance_items LIMIT 0")
+        balance_columns = [item[0] for item in balance_cursor.description]
+        if "owner_scope" not in balance_columns:
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS sprint9_backup_balance_items "
+                "AS SELECT * FROM balance_items"
+            )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS sprint9_backup_settings "
+                "AS SELECT * FROM settings"
+            )
+            db.execute(
+                "ALTER TABLE balance_items "
+                "ADD COLUMN owner_scope TEXT NOT NULL DEFAULT 'Privé'"
+            )
         now = datetime.now(UTC).isoformat()
         db.executemany(
             placeholders(
@@ -162,6 +189,17 @@ def init_db() -> None:
             "sale_tax_pct": "25.8",
             "sale_annuity_reserve": "250000",
             "sale_net_cash_goal": "600000",
+            "sale_structure": "Privé/eenmanszaak",
+            "sale_vpb_low_pct": "19.0",
+            "sale_vpb_high_pct": "25.8",
+            "sale_vpb_threshold": "200000",
+            "sale_box2_pct": "31.0",
+            "sale_retain_in_bv": "0",
+            "aow_start_date": "2032-03-21",
+            "own_pension_start_date": "2032-03-21",
+            "partner_pension_start_date": "2032-03-21",
+            "annuity_start_date": "2027-01-01",
+            "truth_last_confirmed": "",
         }
         db.executemany(
             placeholders(
@@ -176,14 +214,14 @@ def init_db() -> None:
         if scalar(db, "SELECT COUNT(*) FROM balance_items") == 0:
             db.executemany(
                 placeholders("""
-                INSERT INTO balance_items(category,name,amount,item_type)
-                VALUES (?,?,?,?)
+                INSERT INTO balance_items(category,name,amount,item_type,owner_scope)
+                VALUES (?,?,?,?,?)
                 """),
                 [
-                    ("Beleggingen", "ETF-portefeuille", 500000, "asset"),
-                    ("Buffer", "Spaargeld", 100000, "asset"),
-                    ("Lijfrente", "Stakingslijfrente", 250000, "asset"),
-                    ("Overig", "Bitcoin", 0, "asset"),
+                    ("Beleggingen", "ETF-portefeuille", 500000, "asset", "Privé"),
+                    ("Buffer", "Spaargeld", 100000, "asset", "Privé"),
+                    ("Lijfrente", "Stakingslijfrente", 250000, "asset", "Privé"),
+                    ("Overig", "Bitcoin", 0, "asset", "Privé"),
                 ],
             )
         if scalar(db, "SELECT COUNT(*) FROM etf_positions") == 0:
@@ -246,7 +284,7 @@ def init_db() -> None:
 
 
 def read_table(table: str) -> pd.DataFrame:
-    allowed = {"balance_items", "etf_positions", "bitcoin_transactions", "expenses", "family_members", "opa_funds", "opa_transactions"}
+    allowed = {"balance_items", "etf_positions", "bitcoin_transactions", "expenses", "family_members", "opa_funds", "opa_transactions", "plan_actuals"}
     if table not in allowed:
         raise ValueError("Unknown table")
     with connection() as db:
@@ -276,13 +314,14 @@ def replace_table(
     expected_version: int | None = None,
 ) -> None:
     allowed = {
-        "balance_items": ["category", "name", "amount", "item_type"],
+        "balance_items": ["category", "name", "amount", "item_type", "owner_scope"],
         "etf_positions": ["name", "ticker", "invested", "value"],
         "bitcoin_transactions": ["trade_date", "amount_eur", "btc_amount", "note"],
         "expenses": ["category", "description", "monthly_amount"],
         "family_members": ["name", "relationship", "birth_date", "notes"],
         "opa_funds": ["child_name", "birth_date", "target_amount", "expected_return_pct"],
         "opa_transactions": ["child_name", "transaction_date", "amount", "note"],
+        "plan_actuals": ["period", "metric", "planned_amount", "actual_amount", "notes"],
     }
     columns = allowed.get(table)
     if not columns:
@@ -367,7 +406,7 @@ def _numeric(
 def validate_table(table: str, frame: pd.DataFrame) -> pd.DataFrame:
     """Verwijder lege invoerregels en controleer alle tabellen vóór opslag."""
     allowed = {
-        "balance_items": ["category", "name", "amount", "item_type"],
+        "balance_items": ["category", "name", "amount", "item_type", "owner_scope"],
         "etf_positions": ["name", "ticker", "invested", "value"],
         "bitcoin_transactions": ["trade_date", "amount_eur", "btc_amount", "note"],
         "expenses": ["category", "description", "monthly_amount"],
@@ -376,6 +415,7 @@ def validate_table(table: str, frame: pd.DataFrame) -> pd.DataFrame:
             "child_name", "birth_date", "target_amount", "expected_return_pct"
         ],
         "opa_transactions": ["child_name", "transaction_date", "amount", "note"],
+        "plan_actuals": ["period", "metric", "planned_amount", "actual_amount", "notes"],
     }
     columns = allowed.get(table)
     if not columns:
@@ -398,10 +438,12 @@ def validate_table(table: str, frame: pd.DataFrame) -> pd.DataFrame:
     if table == "bitcoin_transactions":
         return clean_bitcoin_transactions(clean)
     if table == "balance_items":
-        _required_text(clean, ["category", "name", "item_type"])
+        _required_text(clean, ["category", "name", "item_type", "owner_scope"])
         _numeric(clean, ["amount"])
         if not clean["item_type"].isin({"asset", "liability"}).all():
             raise ValueError("Type moet 'asset' of 'liability' zijn.")
+        if not clean["owner_scope"].isin({"Privé", "BV"}).all():
+            raise ValueError("Vermogen moet aan 'Privé' of 'BV' zijn toegewezen.")
     elif table == "etf_positions":
         _required_text(clean, ["name", "ticker"])
         _numeric(clean, ["invested", "value"])
@@ -432,6 +474,16 @@ def validate_table(table: str, frame: pd.DataFrame) -> pd.DataFrame:
             for value in clean["transaction_date"]
         ]
         _numeric(clean, ["amount"], allow_zero=False, allow_negative=True)
+    elif table == "plan_actuals":
+        _required_text(clean, ["period", "metric"])
+        clean["period"] = [
+            _normalize_date(f"{str(value).strip()}-01", "Periode")[:7]
+            if len(str(value).strip()) == 7
+            else _normalize_date(value, "Periode")[:7]
+            for value in clean["period"]
+        ]
+        clean["notes"] = clean["notes"].astype("string").fillna("").str.strip()
+        _numeric(clean, ["planned_amount", "actual_amount"], allow_negative=True)
     return clean.reset_index(drop=True)
 
 
@@ -533,12 +585,12 @@ def replace_balance_with_freedom_plan(net_cash: float, annuity_reserve: float) -
         db.execute("DELETE FROM balance_items")
         db.executemany(
             placeholders("""
-            INSERT INTO balance_items(category,name,amount,item_type)
-            VALUES (?,?,?,?)
+            INSERT INTO balance_items(category,name,amount,item_type,owner_scope)
+            VALUES (?,?,?,?,?)
             """),
             [
-                ("Project Vrijheid", "Netto cash na verkoop", net_cash, "asset"),
-                ("Project Vrijheid", "Stakingslijfrente", annuity_reserve, "asset"),
+                ("Project Vrijheid", "Netto cash na verkoop", net_cash, "asset", "Privé"),
+                ("Project Vrijheid", "Stakingslijfrente", annuity_reserve, "asset", "Privé"),
             ],
         )
 
@@ -568,6 +620,7 @@ def create_backup() -> Path:
         "family_members",
         "opa_funds",
         "opa_transactions",
+        "plan_actuals",
         "sync_state",
     ]
     manifest: dict[str, object] = {
@@ -607,6 +660,7 @@ def validate_backup(archive: Path) -> dict[str, object]:
         "family_members",
         "opa_funds",
         "opa_transactions",
+        "plan_actuals",
         "sync_state",
     }
     if not archive.exists() or archive.stat().st_size == 0:

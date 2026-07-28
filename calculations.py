@@ -85,6 +85,12 @@ def sale_scenario(
     other_loans: float = 0.0,
     brokerage_vat_pct: float = 21.0,
     other_sale_costs: float = 0.0,
+    sale_structure: str = "Privé/eenmanszaak",
+    vpb_low_pct: float = 19.0,
+    vpb_high_pct: float = 25.8,
+    vpb_threshold: float = 200_000.0,
+    box2_pct: float = 31.0,
+    retain_in_bv: float = 0.0,
 ) -> dict[str, float]:
     """Calculate an indicative company-sale result.
 
@@ -105,6 +111,11 @@ def sale_scenario(
         "tax_pct": tax_pct,
         "annuity_reserve": annuity_reserve,
         "other_sale_costs": other_sale_costs,
+        "vpb_low_pct": vpb_low_pct,
+        "vpb_high_pct": vpb_high_pct,
+        "vpb_threshold": vpb_threshold,
+        "box2_pct": box2_pct,
+        "retain_in_bv": retain_in_bv,
     }
     if any(value < 0 for value in values.values()):
         raise ValueError("Bedragen en percentages mogen niet negatief zijn.")
@@ -116,18 +127,30 @@ def sale_scenario(
     total_sale_costs = brokerage + other_sale_costs
     total_debt = mortgage + business_credit + other_loans
 
-    book_profit = max(
-        0.0,
-        property_price
-        - property_book_value
-        + inventory_price
-        - inventory_book_value
-        - total_sale_costs,
-    )
+    property_book_profit = property_price - property_book_value
+    inventory_book_profit = inventory_price - inventory_book_value
+    book_profit_before_costs = property_book_profit + inventory_book_profit
+    book_profit = max(0.0, book_profit_before_costs - total_sale_costs)
     taxable_profit = max(0.0, book_profit - annuity_reserve)
-    tax = taxable_profit * tax_pct / 100
-    net_cash = gross - total_sale_costs - total_debt - tax - annuity_reserve
-    total_after_sale = net_cash + annuity_reserve
+    is_bv = str(sale_structure).strip().upper() == "BV"
+    vpb_low_base = min(taxable_profit, vpb_threshold) if is_bv else 0.0
+    vpb_high_base = max(0.0, taxable_profit - vpb_threshold) if is_bv else 0.0
+    corporate_tax = (
+        vpb_low_base * vpb_low_pct / 100
+        + vpb_high_base * vpb_high_pct / 100
+        if is_bv
+        else 0.0
+    )
+    income_tax = 0.0 if is_bv else taxable_profit * tax_pct / 100
+    tax = corporate_tax + income_tax
+    cash_after_business_tax = (
+        gross - total_sale_costs - total_debt - tax - annuity_reserve
+    )
+    retained_bv = min(max(0.0, retain_in_bv), max(0.0, cash_after_business_tax)) if is_bv else 0.0
+    distributable = max(0.0, cash_after_business_tax - retained_bv)
+    box2_tax = distributable * box2_pct / 100 if is_bv else 0.0
+    net_cash = distributable - box2_tax
+    total_after_sale = net_cash + annuity_reserve + retained_bv
 
     return {
         "gross": gross,
@@ -138,8 +161,18 @@ def sale_scenario(
         "total_sale_costs": total_sale_costs,
         "total_debt": total_debt,
         "book_profit": book_profit,
+        "property_book_profit": property_book_profit,
+        "inventory_book_profit": inventory_book_profit,
+        "book_profit_before_costs": book_profit_before_costs,
         "taxable_profit": taxable_profit,
         "tax": tax,
+        "income_tax": income_tax,
+        "corporate_tax": corporate_tax,
+        "vpb_low_base": vpb_low_base,
+        "vpb_high_base": vpb_high_base,
+        "box2_tax": box2_tax,
+        "retained_bv": retained_bv,
+        "distributable": distributable,
         "annuity_reserve": annuity_reserve,
         "net_cash": net_cash,
         "total_after_sale": total_after_sale,
@@ -161,6 +194,12 @@ def sale_scenario_table(
     other_loans: float = 0.0,
     brokerage_vat_pct: float = 21.0,
     other_sale_costs: float = 0.0,
+    sale_structure: str = "Privé/eenmanszaak",
+    vpb_low_pct: float = 19.0,
+    vpb_high_pct: float = 25.8,
+    vpb_threshold: float = 200_000.0,
+    box2_pct: float = 31.0,
+    retain_in_bv: float = 0.0,
 ) -> pd.DataFrame:
     """Return a comparable table for multiple property sale prices."""
     rows: list[dict[str, float]] = []
@@ -178,6 +217,12 @@ def sale_scenario_table(
             other_loans=other_loans,
             brokerage_vat_pct=brokerage_vat_pct,
             other_sale_costs=other_sale_costs,
+            sale_structure=sale_structure,
+            vpb_low_pct=vpb_low_pct,
+            vpb_high_pct=vpb_high_pct,
+            vpb_threshold=vpb_threshold,
+            box2_pct=box2_pct,
+            retain_in_bv=retain_in_bv,
         )
         rows.append(
             {
@@ -222,11 +267,26 @@ def monthly_income_projection(
     side_income_monthly: float,
     aow_age_years: int = 67,
     aow_age_months: int = 3,
+    aow_start_date: date | None = None,
+    own_pension_start_date: date | None = None,
+    partner_pension_start_date: date | None = None,
+    annuity_start_date: date | None = None,
 ) -> pd.DataFrame:
     """Project sources and required ETF withdrawals through end_year."""
-    aow_year = birth_date.year + aow_age_years
-    if birth_date.month + aow_age_months > 12:
-        aow_year += 1
+    if aow_start_date is None:
+        month_index = birth_date.year * 12 + birth_date.month - 1
+        month_index += aow_age_years * 12 + aow_age_months
+        aow_start_date = date(month_index // 12, month_index % 12 + 1, birth_date.day)
+    own_pension_start_date = own_pension_start_date or aow_start_date
+    partner_pension_start_date = partner_pension_start_date or aow_start_date
+    annuity_start_date = annuity_start_date or date(start_year, 1, 1)
+
+    def active_months(year: int, start: date) -> int:
+        if year < start.year:
+            return 0
+        if year > start.year:
+            return 12
+        return 13 - start.month
 
     annuity_by_year = (
         annuity.set_index("year")["net_monthly"].to_dict()
@@ -237,13 +297,17 @@ def monthly_income_projection(
     rows: list[dict[str, float]] = []
     for year in range(start_year, end_year + 1):
         target = target_monthly * (1 + inflation_pct / 100) ** (year - start_year)
-        aow_active = year >= aow_year
+        aow_months = active_months(year, aow_start_date)
+        own_pension_months = active_months(year, own_pension_start_date)
+        partner_pension_months = active_months(year, partner_pension_start_date)
         pension = (
-            own_pension_monthly + partner_pension_monthly if aow_active else 0.0
-        )
-        aow = aow_combined_monthly if aow_active else 0.0
-        side_income = side_income_monthly if not aow_active else 0.0
-        annuity_income = float(annuity_by_year.get(year, 0.0))
+            own_pension_monthly * own_pension_months
+            + partner_pension_monthly * partner_pension_months
+        ) / 12
+        aow = aow_combined_monthly * aow_months / 12
+        side_income = side_income_monthly * (12 - aow_months) / 12
+        annuity_months = active_months(year, annuity_start_date)
+        annuity_income = float(annuity_by_year.get(year, 0.0)) * annuity_months / 12
         other_income = pension + aow + side_income + annuity_income
         required = max(0.0, target - other_income)
 
@@ -309,6 +373,10 @@ def stress_test_income_plan(
     partner_pension_monthly: float,
     aow_combined_monthly: float,
     side_income_monthly: float,
+    aow_start_date: date | None = None,
+    own_pension_start_date: date | None = None,
+    partner_pension_start_date: date | None = None,
+    annuity_start_date: date | None = None,
     return_scenarios: Iterable[float] = (2.0, 4.0, 6.0),
 ) -> pd.DataFrame:
     """Compare the same plan under several annual ETF return assumptions."""
@@ -327,6 +395,10 @@ def stress_test_income_plan(
             partner_pension_monthly=partner_pension_monthly,
             aow_combined_monthly=aow_combined_monthly,
             side_income_monthly=side_income_monthly,
+            aow_start_date=aow_start_date,
+            own_pension_start_date=own_pension_start_date,
+            partner_pension_start_date=partner_pension_start_date,
+            annuity_start_date=annuity_start_date,
         )
         health = projection_health(projection)
         rows.append(

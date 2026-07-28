@@ -140,14 +140,15 @@ st.markdown(css(dark_mode), unsafe_allow_html=True)
 
 st.sidebar.markdown("## 🟦 GeertOS")
 st.sidebar.caption("Freedom Edition · financiële cockpit")
-st.sidebar.success("✅ Sprint 8D · Stabiliteit en beveiliging actief")
 if access_control_enabled():
     st.sidebar.caption("🔒 Toegangscode actief")
 else:
     st.sidebar.caption("💻 Alleen lokaal · geen toegangscode ingesteld")
+st.sidebar.success("Sprint 9 · Persoonlijke financiële waarheid actief")
 st.sidebar.caption(f"Bronmap: {__file__}")
 PAGES = [
     "Dashboard",
+    "Persoonlijke waarheid",
     "Familie",
     "Opa-fonds",
     "Project Vrijheid",
@@ -389,10 +390,22 @@ def balance_page() -> None:
     frame = read_table("balance_items")
     assets = frame.loc[frame["item_type"] == "asset", "amount"].sum()
     debts = frame.loc[frame["item_type"] == "liability", "amount"].sum()
-    a, b, c = st.columns(3)
+    private_frame = frame.loc[frame["owner_scope"] == "Privé"]
+    bv_frame = frame.loc[frame["owner_scope"] == "BV"]
+    private_net = (
+        private_frame.loc[private_frame["item_type"] == "asset", "amount"].sum()
+        - private_frame.loc[private_frame["item_type"] == "liability", "amount"].sum()
+    )
+    bv_net = (
+        bv_frame.loc[bv_frame["item_type"] == "asset", "amount"].sum()
+        - bv_frame.loc[bv_frame["item_type"] == "liability", "amount"].sum()
+    )
+    a, b, c, d, e = st.columns(5)
     a.metric("Bezittingen", money(assets))
     b.metric("Schulden", money(debts))
     c.metric("Netto vermogen", money(net_worth([assets], [debts])))
+    d.metric("Privé", money(private_net))
+    e.metric("BV", money(bv_net))
 
     st.subheader("Balans bijwerken")
     edited = st.data_editor(
@@ -411,6 +424,11 @@ def balance_page() -> None:
                 options=["asset", "liability"],
                 required=True,
                 help="asset = bezit, liability = schuld",
+            ),
+            "owner_scope": st.column_config.SelectboxColumn(
+                "Waar staat het?",
+                options=["Privé", "BV"],
+                required=True,
             ),
         },
         key="balance_editor",
@@ -580,6 +598,19 @@ def pension_page() -> None:
             value=number("aow_combined_monthly", 2000),
             step=50.0,
         )
+        d1, d2, d3 = st.columns(3)
+        aow_date = d1.date_input(
+            "Exacte AOW-datum",
+            value=date.fromisoformat(settings.get("aow_start_date", "2032-03-21")),
+        )
+        own_pension_date = d2.date_input(
+            "Start eigen pensioen",
+            value=date.fromisoformat(settings.get("own_pension_start_date", "2032-03-21")),
+        )
+        partner_pension_date = d3.date_input(
+            "Start partnerpensioen",
+            value=date.fromisoformat(settings.get("partner_pension_start_date", "2032-03-21")),
+        )
         submitted = st.form_submit_button("Pensioeninstellingen opslaan")
         if submitted:
             set_settings(
@@ -589,6 +620,9 @@ def pension_page() -> None:
                     "own_pension_monthly": own,
                     "partner_pension_monthly": partner,
                     "aow_combined_monthly": aow,
+                    "aow_start_date": aow_date.isoformat(),
+                    "own_pension_start_date": own_pension_date.isoformat(),
+                    "partner_pension_start_date": partner_pension_date.isoformat(),
                 }
             )
             st.success("Pensioeninstellingen opgeslagen.")
@@ -644,6 +678,10 @@ def annuity_page() -> None:
             value=number("annuity_tax_pct", 37),
             step=.5,
         )
+        annuity_start = st.date_input(
+            "Exacte ingangsdatum lijfrente",
+            value=date.fromisoformat(settings.get("annuity_start_date", "2027-01-01")),
+        )
         if st.form_submit_button("Lijfrente opslaan"):
             set_settings(
                 {
@@ -651,6 +689,7 @@ def annuity_page() -> None:
                     "annuity_years": years,
                     "annuity_return_pct": annual_return,
                     "annuity_tax_pct": tax,
+                    "annuity_start_date": annuity_start.isoformat(),
                 }
             )
             st.success("Lijfrente-instellingen opgeslagen.")
@@ -782,6 +821,12 @@ def freedom_page() -> None:
 
     with st.form("freedom_form"):
         st.subheader("Verkoop")
+        sale_structure = st.selectbox(
+            "Fiscale structuur van de verkoop",
+            ["Privé/eenmanszaak", "BV"],
+            index=1 if settings.get("sale_structure") == "BV" else 0,
+            help="Deze keuze bepaalt of GeertOS rekent met een indicatief inkomstenbelastingtarief of met Vpb en box 2.",
+        )
         c1, c2, c3 = st.columns(3)
         property_price = c1.number_input(
             "Verkoopprijs pand",
@@ -844,6 +889,34 @@ def freedom_page() -> None:
         other_costs = d3.number_input(
             "Overige verkoopkosten", min_value=0.0, value=number("sale_other_costs", 0), step=1000.0
         )
+        st.subheader("Fiscale aannames")
+        f1, f2, f3 = st.columns(3)
+        vpb_low = f1.number_input(
+            "Vpb laag (%)", min_value=0.0, max_value=60.0,
+            value=number("sale_vpb_low_pct", 19), step=0.1,
+            disabled=sale_structure != "BV",
+        )
+        vpb_high = f2.number_input(
+            "Vpb hoog (%)", min_value=0.0, max_value=60.0,
+            value=number("sale_vpb_high_pct", 25.8), step=0.1,
+            disabled=sale_structure != "BV",
+        )
+        vpb_threshold = f3.number_input(
+            "Vpb-schijfgrens", min_value=0.0,
+            value=number("sale_vpb_threshold", 200000), step=5000.0,
+            disabled=sale_structure != "BV",
+        )
+        f4, f5 = st.columns(2)
+        box2 = f4.number_input(
+            "Box 2 bij uitkering (%)", min_value=0.0, max_value=60.0,
+            value=number("sale_box2_pct", 31), step=0.1,
+            disabled=sale_structure != "BV",
+        )
+        retain_bv = f5.number_input(
+            "Bedrag dat in BV blijft", min_value=0.0,
+            value=number("sale_retain_in_bv", 0), step=5000.0,
+            disabled=sale_structure != "BV",
+        )
         submitted = st.form_submit_button("Berekening opslaan", type="primary")
 
     if submitted:
@@ -861,6 +934,12 @@ def freedom_page() -> None:
                 "sale_other_costs": other_costs,
                 "sale_tax_pct": tax,
                 "sale_annuity_reserve": annuity_reserve,
+                "sale_structure": sale_structure,
+                "sale_vpb_low_pct": vpb_low,
+                "sale_vpb_high_pct": vpb_high,
+                "sale_vpb_threshold": vpb_threshold,
+                "sale_box2_pct": box2,
+                "sale_retain_in_bv": retain_bv,
             }
         )
         st.success("Project Vrijheid is opgeslagen.")
@@ -879,6 +958,12 @@ def freedom_page() -> None:
         "sale_other_costs": other_costs,
         "sale_tax_pct": tax,
         "sale_annuity_reserve": annuity_reserve,
+        "sale_structure": sale_structure,
+        "sale_vpb_low_pct": vpb_low,
+        "sale_vpb_high_pct": vpb_high,
+        "sale_vpb_threshold": vpb_threshold,
+        "sale_box2_pct": box2,
+        "sale_retain_in_bv": retain_bv,
     }
     result = engine.evaluate(sale_overrides).sale
 
@@ -891,9 +976,28 @@ def freedom_page() -> None:
 
     a2, b2, c2, d2 = st.columns(4)
     a2.metric("Courtage incl. btw", money(result["brokerage"]))
-    b2.metric("Boekwinst", money(result["book_profit"]))
+    b2.metric("Belastbare winst", money(result["taxable_profit"]))
     c2.metric("Lijfrente", money(result["annuity_reserve"]))
     d2.metric("Totaal na verkoop", money(result["total_after_sale"]))
+
+    fiscal = pd.DataFrame(
+        [
+            ("Boekwinst pand", result["property_book_profit"]),
+            ("Boekwinst voorraad", result["inventory_book_profit"]),
+            ("Verkoopkosten", -result["total_sale_costs"]),
+            ("Winst vóór lijfrente", result["book_profit"]),
+            ("Lijfrenteaftrek/reservering", -result["annuity_reserve"]),
+            ("Belastbare winst", result["taxable_profit"]),
+            ("Inkomstenbelasting indicatief", -result["income_tax"]),
+            ("Vennootschapsbelasting indicatief", -result["corporate_tax"]),
+            ("Box 2 indicatief", -result["box2_tax"]),
+            ("Netto privé", result["net_cash"]),
+            ("Blijft in BV", result["retained_bv"]),
+        ],
+        columns=["Onderdeel", "Bedrag"],
+    )
+    st.subheader("Fiscale uitsplitsing")
+    st.dataframe(fiscal, hide_index=True, use_container_width=True)
 
     cash_goal = number("sale_net_cash_goal", 600000)
     if result["net_cash"] < cash_goal:
@@ -1045,6 +1149,153 @@ def scenario_analysis_page() -> None:
         }
     )
     st.dataframe(display, hide_index=True, use_container_width=True)
+
+
+def personal_truth_page() -> None:
+    page_header(
+        "Persoonlijke financiële waarheid",
+        "Eén controlepunt voor werkelijke cijfers, bevestigde aannames en verschillen met de planning.",
+    )
+    st.info(
+        "Werkelijke saldi komen uit de balans, ETF-, Bitcoin- en uitgaventabellen. "
+        "Toekomstige rendementen en fiscale percentages blijven aannames en zijn daarom apart herkenbaar."
+    )
+
+    core = [
+        ("Verkoopprijs pand", "sale_property_price", "Werkelijk / offerte"),
+        ("Boekwaarde pand + grond", "sale_property_book", "Werkelijk / administratie"),
+        ("Verkoopprijs voorraad", "sale_inventory_price", "Werkelijk / offerte"),
+        ("Boekwaarde voorraad", "sale_inventory_book", "Werkelijk / administratie"),
+        ("Hypotheek", "sale_mortgage", "Werkelijk / bank"),
+        ("Bedrijfskrediet", "sale_business_credit", "Werkelijk / bank"),
+        ("Overige leningen", "sale_other_loans", "Werkelijk / bank"),
+        ("Doel netto per maand", "target_monthly", "Persoonlijk plan"),
+        ("ETF-rendement per jaar", "etf_return_pct", "Aanname"),
+        ("Inflatie per jaar", "inflation_pct", "Aanname"),
+        ("Belastingtarief indicatief", "sale_tax_pct", "Aanname fiscalist"),
+        ("Vpb laag", "sale_vpb_low_pct", "Aanname fiscalist"),
+        ("Vpb hoog", "sale_vpb_high_pct", "Aanname fiscalist"),
+        ("Box 2", "sale_box2_pct", "Aanname fiscalist"),
+        ("AOW netto per maand", "aow_combined_monthly", "Aanname / beschikking"),
+        ("Eigen pensioen per maand", "own_pension_monthly", "Werkelijk / UPO"),
+        ("Partnerpensioen per maand", "partner_pension_monthly", "Werkelijk / UPO"),
+    ]
+    assumption_rows = []
+    for label, key, source in core:
+        assumption_rows.append(
+            {
+                "Onderdeel": label,
+                "Waarde": number(key),
+                "Bron/status": source,
+                "Nog laten controleren": "Ja" if "Aanname" in source else "Nee",
+            }
+        )
+    st.subheader("Controle van bedragen en aannames")
+    st.dataframe(pd.DataFrame(assumption_rows), hide_index=True, use_container_width=True)
+
+    date_rows = pd.DataFrame(
+        [
+            ("Geboortedatum", settings.get("birth_date", "")),
+            ("AOW vanaf", settings.get("aow_start_date", "")),
+            ("Eigen pensioen vanaf", settings.get("own_pension_start_date", "")),
+            ("Partnerpensioen vanaf", settings.get("partner_pension_start_date", "")),
+            ("Lijfrente vanaf", settings.get("annuity_start_date", "")),
+        ],
+        columns=["Gebeurtenis", "Exacte datum"],
+    )
+    st.subheader("Exacte ingangsdatums")
+    st.dataframe(date_rows, hide_index=True, use_container_width=True)
+
+    balance = read_table("balance_items")
+    private = balance.loc[balance["owner_scope"] == "Privé"]
+    bv = balance.loc[balance["owner_scope"] == "BV"]
+    private_net = float(
+        private.loc[private["item_type"] == "asset", "amount"].sum()
+        - private.loc[private["item_type"] == "liability", "amount"].sum()
+    )
+    bv_net = float(
+        bv.loc[bv["item_type"] == "asset", "amount"].sum()
+        - bv.loc[bv["item_type"] == "liability", "amount"].sum()
+    )
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Netto privé", money(private_net))
+    c2.metric("Netto BV", money(bv_net))
+    c3.metric("Gecombineerd", money(private_net + bv_net))
+
+    st.subheader("Werkelijkheid tegenover planning")
+    sync_version = get_sync_version("plan_actuals")
+    actuals = read_table("plan_actuals")
+    editable = actuals.drop(columns=["id"])
+    if editable.empty:
+        editable = pd.DataFrame(
+            [
+                {
+                    "period": date.today().strftime("%Y-%m"),
+                    "metric": "Netto uitgaven",
+                    "planned_amount": number("target_monthly", 4000),
+                    "actual_amount": 0.0,
+                    "notes": "",
+                }
+            ]
+        )
+    edited = st.data_editor(
+        editable,
+        num_rows="dynamic",
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "period": st.column_config.TextColumn("Maand (JJJJ-MM)", required=True),
+            "metric": st.column_config.TextColumn("Meetpunt", required=True),
+            "planned_amount": st.column_config.NumberColumn("Planning", format="€ %.2f"),
+            "actual_amount": st.column_config.NumberColumn("Werkelijk", format="€ %.2f"),
+            "notes": st.column_config.TextColumn("Toelichting"),
+        },
+        key="plan_actuals_editor",
+    )
+    if st.button("Planning en werkelijkheid opslaan", type="primary"):
+        if save_synced_table("plan_actuals", edited, sync_version):
+            st.success("Vergelijking opgeslagen.")
+            st.rerun()
+
+    if not actuals.empty:
+        comparison = actuals.copy()
+        comparison["difference"] = comparison["actual_amount"] - comparison["planned_amount"]
+        st.dataframe(
+            comparison[["period", "metric", "planned_amount", "actual_amount", "difference"]],
+            hide_index=True,
+            use_container_width=True,
+        )
+        chart_data = comparison.melt(
+            id_vars=["period", "metric"],
+            value_vars=["planned_amount", "actual_amount"],
+            var_name="Soort",
+            value_name="Bedrag",
+        )
+        fig = px.bar(
+            chart_data,
+            x="period",
+            y="Bedrag",
+            color="Soort",
+            barmode="group",
+            facet_row="metric" if comparison["metric"].nunique() > 1 else None,
+            title="Planning tegenover werkelijkheid",
+        )
+        st.plotly_chart(chart_layout(fig, dark_mode), use_container_width=True)
+
+    confirmed = settings.get("truth_last_confirmed", "")
+    if confirmed:
+        st.success(f"Laatste integrale controle: {confirmed}")
+    else:
+        st.warning("De volledige set uitgangspunten is nog niet integraal bevestigd.")
+    if st.button("Markeer alle huidige waarden als vandaag gecontroleerd"):
+        set_settings({"truth_last_confirmed": date.today().isoformat()})
+        st.success("Controledatum vastgelegd.")
+        st.rerun()
+
+    st.caption(
+        "Fiscale percentages zijn planningsaannames. Laat verkoopstructuur, "
+        "stakingslijfrente, Vpb en box 2 vóór een besluit schriftelijk bevestigen door accountant of fiscalist."
+    )
 
 
 def settings_page() -> None:
@@ -1510,6 +1761,7 @@ def charts_page() -> None:
 
 ROUTES = {
     "Dashboard": dashboard,
+    "Persoonlijke waarheid": personal_truth_page,
     "Familie": family_page,
     "Opa-fonds": opa_fund_page,
     "Project Vrijheid": freedom_page,
