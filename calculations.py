@@ -173,6 +173,7 @@ def sale_scenario(
         "box2_tax": box2_tax,
         "retained_bv": retained_bv,
         "distributable": distributable,
+        "cash_after_business_tax": cash_after_business_tax,
         "annuity_reserve": annuity_reserve,
         "net_cash": net_cash,
         "total_after_sale": total_after_sale,

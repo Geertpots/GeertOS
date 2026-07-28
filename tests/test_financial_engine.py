@@ -102,6 +102,61 @@ def test_inventory_price_recalculates_all_dependent_results() -> None:
     assert engine.settings == original
 
 
+def test_complete_sale_scenarios_use_one_central_evaluation() -> None:
+    engine = sample_engine()
+    comparison = engine.compare_sale_scenarios(
+        {
+            "Voorzichtig": {
+                "sale_property_price": 1_450_000,
+                "sale_inventory_price": 250_000,
+            },
+            "Verwacht": {
+                "sale_property_price": 1_500_000,
+                "sale_inventory_price": 275_000,
+            },
+            "Gunstig": {
+                "sale_property_price": 1_650_000,
+                "sale_inventory_price": 350_000,
+            },
+        },
+        cash_goal=600_000,
+    )
+
+    assert comparison["Scenario"].tolist() == [
+        "Voorzichtig",
+        "Verwacht",
+        "Gunstig",
+    ]
+    assert comparison["Bruto verkoop"].is_monotonic_increasing
+    assert comparison["Netto cash"].is_monotonic_increasing
+    assert comparison["Vermogen na verkoop"].is_monotonic_increasing
+    assert comparison["Vermogen eindjaar"].is_monotonic_increasing
+
+
+def test_assumption_audit_flags_missing_review_dates() -> None:
+    audit = sample_engine().assumption_audit()
+    review_rows = audit.loc[audit["Onderdeel"].str.contains("gecontroleerd")]
+
+    assert len(review_rows) == 3
+    assert set(review_rows["Status"]) == {"Controleren"}
+
+
+def test_sale_cash_bridge_reconciles_to_net_cash() -> None:
+    sale = sample_engine().evaluate().sale
+    cash_after_tax = (
+        sale["gross"]
+        - sale["total_sale_costs"]
+        - sale["total_debt"]
+        - sale["tax"]
+        - sale["annuity_reserve"]
+    )
+
+    assert sale["cash_after_business_tax"] == pytest.approx(cash_after_tax)
+    assert sale["net_cash"] == pytest.approx(
+        cash_after_tax - sale["retained_bv"] - sale["box2_tax"]
+    )
+
+
 def test_scenario_table_uses_same_sale_calculation() -> None:
     engine = sample_engine()
     table = engine.scenario_table([1_400_000, 1_500_000, 1_600_000])

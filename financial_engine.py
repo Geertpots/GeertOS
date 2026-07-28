@@ -134,6 +134,153 @@ class FinancialEngine:
             retain_in_bv=_number(values, "sale_retain_in_bv", 0),
         )
 
+    def compare_sale_scenarios(
+        self,
+        scenarios: Mapping[str, Mapping[str, object]],
+        *,
+        cash_goal: float = 0.0,
+    ) -> pd.DataFrame:
+        """Vergelijk complete scenario's via exact dezelfde centrale rekenroute."""
+        rows: list[dict[str, object]] = []
+        for name, overrides in scenarios.items():
+            result = self.evaluate(overrides)
+            first_year = result.projection.iloc[0]
+            rows.append(
+                {
+                    "Scenario": name,
+                    "Pand": float(
+                        overrides.get(
+                            "sale_property_price",
+                            self.settings.get("sale_property_price", 0),
+                        )
+                    ),
+                    "Voorraad": float(
+                        overrides.get(
+                            "sale_inventory_price",
+                            self.settings.get("sale_inventory_price", 0),
+                        )
+                    ),
+                    "Bruto verkoop": float(result.sale["gross"]),
+                    "Netto cash": float(result.sale["net_cash"]),
+                    "Verschil cashdoel": float(result.sale["net_cash"])
+                    - float(cash_goal),
+                    "Vermogen na verkoop": float(result.post_sale_net_worth),
+                    f"Netto p/m {int(first_year['year'])}": float(
+                        first_year["actual"]
+                    ),
+                    "Vermogen eindjaar": float(
+                        result.projection_health["end_balance"]
+                    ),
+                    "Plan op koers": bool(result.projection_health["funded"]),
+                }
+            )
+        return pd.DataFrame(rows)
+
+    def assumption_audit(self) -> pd.DataFrame:
+        """Controleer volledigheid en actualiteit zonder financiële data te wijzigen."""
+        rows: list[dict[str, str]] = []
+
+        def add(
+            category: str,
+            item: str,
+            status: str,
+            explanation: str,
+        ) -> None:
+            rows.append(
+                {
+                    "Categorie": category,
+                    "Onderdeel": item,
+                    "Status": status,
+                    "Toelichting": explanation,
+                }
+            )
+
+        required_amounts = (
+            ("Verkoop", "Verkoopprijs pand", "sale_property_price"),
+            ("Verkoop", "Boekwaarde pand", "sale_property_book"),
+            ("Verkoop", "Verkoopprijs voorraad", "sale_inventory_price"),
+            ("Verkoop", "Boekwaarde voorraad", "sale_inventory_book"),
+            ("Verkoop", "Hypotheek", "sale_mortgage"),
+            ("Planning", "Doel netto per maand", "target_monthly"),
+            ("Pensioen", "AOW per maand", "aow_combined_monthly"),
+        )
+        for category, label, key in required_amounts:
+            raw = self.settings.get(key)
+            try:
+                valid = raw is not None and float(raw) > 0
+            except (TypeError, ValueError):
+                valid = False
+            add(
+                category,
+                label,
+                "OK" if valid else "Ontbreekt",
+                "Waarde is ingevuld." if valid else "Vul een geldige waarde groter dan nul in.",
+            )
+
+        required_dates = (
+            ("Persoon", "Geboortedatum", "birth_date"),
+            ("Pensioen", "AOW-ingangsdatum", "aow_start_date"),
+            ("Pensioen", "Eigen pensioendatum", "own_pension_start_date"),
+            ("Pensioen", "Partnerpensioendatum", "partner_pension_start_date"),
+            ("Lijfrente", "Lijfrente-ingangsdatum", "annuity_start_date"),
+        )
+        for category, label, key in required_dates:
+            raw = self.settings.get(key)
+            try:
+                date.fromisoformat(str(raw))
+                valid = True
+            except (TypeError, ValueError):
+                valid = False
+            add(
+                category,
+                label,
+                "OK" if valid else "Ontbreekt",
+                "Exacte datum is ingevuld." if valid else "Vul een exacte datum in.",
+            )
+
+        freshness = (
+            (
+                "Administratie",
+                "Financiële bedragen gecontroleerd",
+                "financial_data_checked_on",
+                90,
+            ),
+            (
+                "Fiscaal",
+                "Fiscale aannames gecontroleerd",
+                "fiscal_assumptions_checked_on",
+                365,
+            ),
+            (
+                "Beleggingen",
+                "Marktwaarden gecontroleerd",
+                "market_values_checked_on",
+                31,
+            ),
+        )
+        for category, label, key, maximum_age in freshness:
+            raw = self.settings.get(key)
+            try:
+                checked = date.fromisoformat(str(raw))
+                age = (self.today - checked).days
+                valid = 0 <= age <= maximum_age
+                explanation = (
+                    f"{age} dagen geleden gecontroleerd."
+                    if valid
+                    else f"Laatste controle was {age} dagen geleden; opnieuw controleren."
+                )
+            except (TypeError, ValueError):
+                valid = False
+                explanation = "Nog geen controledatum vastgelegd."
+            add(
+                category,
+                label,
+                "OK" if valid else "Controleren",
+                explanation,
+            )
+
+        return pd.DataFrame(rows)
+
     def evaluate(
         self, overrides: Mapping[str, object] | None = None
     ) -> FinancialResult:

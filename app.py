@@ -177,7 +177,7 @@ if access_control_enabled():
     st.sidebar.caption("🔒 Toegangscode actief")
 else:
     st.sidebar.caption("💻 Alleen lokaal · geen toegangscode ingesteld")
-st.sidebar.success("Sprint 10F · Pand- en voorraadscenario actief")
+st.sidebar.success("Controleerbare financiële cockpit actief")
 PAGES = [
     "Vandaag",
     "Dashboard",
@@ -630,6 +630,88 @@ def dashboard() -> None:
             }
         )
         st.success("De verkoopprijzen van pand en voorraad zijn opgeslagen.")
+
+    with st.expander("Zo ontstaat de netto cash", expanded=False):
+        bridge = pd.DataFrame(
+            [
+                ("Bruto verkoop pand + voorraad", sale["gross"]),
+                ("Verkoopkosten", -sale["total_sale_costs"]),
+                ("Aflossing schulden", -sale["total_debt"]),
+                ("Belasting onderneming", -sale["tax"]),
+                ("Stakingslijfrente gereserveerd", -sale["annuity_reserve"]),
+                ("Cash na ondernemingsbelasting", sale["cash_after_business_tax"]),
+                ("Blijft achter in BV", -sale["retained_bv"]),
+                ("Box 2 bij uitkering", -sale["box2_tax"]),
+                ("Netto cash privé", sale["net_cash"]),
+            ],
+            columns=["Stap", "Bedrag"],
+        )
+        bridge["Bedrag"] = bridge["Bedrag"].map(money)
+        st.dataframe(bridge, hide_index=True, use_container_width=True)
+        st.caption(
+            "Alle regels komen rechtstreeks uit dezelfde centrale verkoopberekening. "
+            "De stakingslijfrente blijft onderdeel van je totale vermogen, maar is "
+            "geen vrij beschikbare netto cash."
+        )
+
+    st.subheader("Drie verkoopscenario’s naast elkaar")
+    scenarios = engine.compare_sale_scenarios(
+        {
+            "Voorzichtig": {
+                "sale_property_price": 1_450_000,
+                "sale_inventory_price": 250_000,
+            },
+            "Verwacht": {
+                "sale_property_price": scenario_price,
+                "sale_inventory_price": scenario_inventory,
+            },
+            "Gunstig": {
+                "sale_property_price": 1_650_000,
+                "sale_inventory_price": 350_000,
+            },
+        },
+        cash_goal=goal,
+    )
+    scenario_display = scenarios.copy()
+    money_columns = [
+        "Pand",
+        "Voorraad",
+        "Bruto verkoop",
+        "Netto cash",
+        "Verschil cashdoel",
+        "Vermogen na verkoop",
+        "Vermogen eindjaar",
+    ]
+    money_columns.extend(
+        column for column in scenario_display.columns if column.startswith("Netto p/m")
+    )
+    for column in money_columns:
+        scenario_display[column] = scenario_display[column].map(money)
+    scenario_display["Plan op koers"] = scenario_display["Plan op koers"].map(
+        {True: "Ja", False: "Nee"}
+    )
+    st.dataframe(scenario_display, hide_index=True, use_container_width=True)
+
+    audit = engine.assumption_audit()
+    attention = audit.loc[audit["Status"] != "OK"]
+    with st.expander(
+        f"Controle gegevens en aannames · {len(attention)} aandachtspunt(en)",
+        expanded=False,
+    ):
+        if attention.empty:
+            st.success("Alle verplichte gegevens en controledatums zijn actueel.")
+        else:
+            st.warning(
+                "Deze punten maken de berekening niet onbruikbaar, maar moeten "
+                "worden gecontroleerd voordat je een definitieve beslissing neemt."
+            )
+            st.dataframe(attention, hide_index=True, use_container_width=True)
+        st.button(
+            "Open Persoonlijke financiële waarheid",
+            on_click=navigate_to,
+            args=("Persoonlijke waarheid",),
+            use_container_width=True,
+        )
 
     st.markdown(
         '<div class="pv-section-title">Inkomen en vermogen tot 2047</div>',
@@ -1615,6 +1697,41 @@ def personal_truth_page() -> None:
         "Toekomstige rendementen en fiscale percentages blijven aannames en zijn daarom apart herkenbaar."
     )
 
+    def checked_date(key: str) -> date:
+        try:
+            return date.fromisoformat(str(settings.get(key, "")))
+        except (TypeError, ValueError):
+            return date.today()
+
+    with st.form("control_dates_form"):
+        st.subheader("Wanneer zijn de bronnen voor het laatst gecontroleerd?")
+        c1, c2, c3 = st.columns(3)
+        financial_checked = c1.date_input(
+            "Financiële bedragen",
+            value=checked_date("financial_data_checked_on"),
+            help="Bank, administratie, boekwaarden en schulden.",
+        )
+        fiscal_checked = c2.date_input(
+            "Fiscale aannames",
+            value=checked_date("fiscal_assumptions_checked_on"),
+            help="Tarieven en verkoopstructuur, bij voorkeur bevestigd door fiscalist of accountant.",
+        )
+        market_checked = c3.date_input(
+            "ETF- en Bitcoinwaarden",
+            value=checked_date("market_values_checked_on"),
+            help="Datum waarop de gebruikte marktwaarden zijn gecontroleerd.",
+        )
+        dates_submitted = st.form_submit_button("Controledatums opslaan")
+    if dates_submitted:
+        set_settings(
+            {
+                "financial_data_checked_on": financial_checked.isoformat(),
+                "fiscal_assumptions_checked_on": fiscal_checked.isoformat(),
+                "market_values_checked_on": market_checked.isoformat(),
+            }
+        )
+        st.success("De controledatums zijn opgeslagen.")
+
     core = [
         ("Verkoopprijs pand", "sale_property_price", "Werkelijk / offerte"),
         ("Boekwaarde pand + grond", "sale_property_book", "Werkelijk / administratie"),
@@ -1646,6 +1763,18 @@ def personal_truth_page() -> None:
         )
     st.subheader("Controle van bedragen en aannames")
     st.dataframe(pd.DataFrame(assumption_rows), hide_index=True, use_container_width=True)
+
+    audit = make_engine().assumption_audit()
+    st.subheader("Automatische kwaliteitscontrole")
+    st.dataframe(audit, hide_index=True, use_container_width=True)
+    open_points = int((audit["Status"] != "OK").sum())
+    if open_points:
+        st.warning(
+            f"Er zijn {open_points} aandachtspunten. Controleer deze voordat je "
+            "een definitieve financiële beslissing neemt."
+        )
+    else:
+        st.success("Alle verplichte invoer en controledatums zijn actueel.")
 
     date_rows = pd.DataFrame(
         [
@@ -2240,7 +2369,7 @@ st.markdown(
     f"""
     <div class="pv-footer">
       <span>GeertOS · Freedom Edition</span>
-      <span>Veilig verbonden · {backend_name()} · Sprint 10F</span>
+      <span>Veilig verbonden · {backend_name()} · Controleerbare cockpit</span>
     </div>
     """,
     unsafe_allow_html=True,
