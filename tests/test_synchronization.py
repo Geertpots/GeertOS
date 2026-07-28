@@ -83,3 +83,25 @@ def test_opa_deposit_updates_shared_version(synchronized_sqlite: Path) -> None:
     transactions = database.read_table("opa_transactions")
     assert len(transactions) == 1
     assert float(transactions.iloc[0]["amount"]) == 25.0
+
+
+def test_missing_sync_state_is_repaired_automatically(
+    synchronized_sqlite: Path,
+) -> None:
+    with database.connection() as db:
+        db.execute(
+            database.placeholders(
+                "DELETE FROM sync_state WHERE table_name = ?"
+            ),
+            ("plan_actuals",),
+        )
+
+    assert database.get_sync_version("plan_actuals") == 0
+
+    with database.connection() as db:
+        restored = database.scalar(
+            db,
+            "SELECT version FROM sync_state WHERE table_name = ?",
+            ("plan_actuals",),
+        )
+    assert int(restored) == 0

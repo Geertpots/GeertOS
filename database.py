@@ -304,6 +304,18 @@ def get_sync_version(table: str) -> int:
             placeholders("SELECT version FROM sync_state WHERE table_name = ?"),
             (table,),
         )
+        if value is None:
+            db.execute(
+                placeholders(
+                    """
+                    INSERT INTO sync_state(table_name, version, updated_at)
+                    VALUES (?, 0, ?)
+                    ON CONFLICT(table_name) DO NOTHING
+                    """
+                ),
+                (table, datetime.now(UTC).isoformat()),
+            )
+            value = 0
     return int(value or 0)
 
 
@@ -329,6 +341,16 @@ def replace_table(
     clean = validate_table(table, frame)
     with connection() as db:
         now = datetime.now(UTC).isoformat()
+        db.execute(
+            placeholders(
+                """
+                INSERT INTO sync_state(table_name, version, updated_at)
+                VALUES (?, 0, ?)
+                ON CONFLICT(table_name) DO NOTHING
+                """
+            ),
+            (table, now),
+        )
         if expected_version is None:
             cursor = db.execute(
                 placeholders(
