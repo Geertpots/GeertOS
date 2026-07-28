@@ -1,5 +1,6 @@
 """GeertOS – Freedom Edition: persoonlijke financiële cockpit."""
 
+# Sprint 8D deployment marker: forces a clean rebuild after all modules are online.
 from __future__ import annotations
 
 from datetime import date, datetime
