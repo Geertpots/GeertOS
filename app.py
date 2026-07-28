@@ -90,10 +90,11 @@ def integer(key: str, default: int = 0) -> int:
 
 
 def page_header(title: str, subtitle: str) -> None:
+    group = page_group(title)
     st.markdown(
         f"""
         <div class="pv-hero">
-          <div class="pv-kicker">GeertOS · Freedom Edition</div>
+          <div class="pv-kicker">GeertOS · {group}</div>
           <h1>{title}</h1>
           <p>{subtitle}</p>
         </div>
@@ -133,6 +134,35 @@ def make_projection() -> pd.DataFrame:
     return make_engine().evaluate().projection
 
 
+def page_group(title: str) -> str:
+    """Geef iedere pagina een rustige, herkenbare hoofdgroep."""
+    if title in {
+        "Project Vrijheid", "Tijdlijn financiële vrijheid",
+        "Netto maandinkomen",
+    }:
+        return "Financiële vrijheid"
+    if title in {
+        "Netto vermogen", "Uitgavenplanner",
+        "Persoonlijke financiële waarheid",
+    }:
+        return "Vermogen"
+    if "ETF" in title or "Bitcoin" in title:
+        return "Beleggingen"
+    if "Pensioen" in title or "Lijfrente" in title:
+        return "Pensioen"
+    if "Familie" in title or "Opa" in title:
+        return "Familie"
+    if "assistent" in title.lower():
+        return "Persoonlijke adviseur"
+    if title in {
+        "Scenariovergelijker", "Plancontrole", "Beslislab", "Grafieken",
+    }:
+        return "Analyse"
+    if "uitgangspunten" in title.lower():
+        return "Instellingen"
+    return "Freedom Edition"
+
+
 dark_mode = st.sidebar.toggle(
     "Donkere modus",
     value=settings.get("dark_mode", "1") == "1",
@@ -147,8 +177,7 @@ if access_control_enabled():
     st.sidebar.caption("🔒 Toegangscode actief")
 else:
     st.sidebar.caption("💻 Alleen lokaal · geen toegangscode ingesteld")
-st.sidebar.success("Sprint 10C · Veilige adviseur actief")
-st.sidebar.caption(f"Bronmap: {__file__}")
+st.sidebar.success("Sprint 10D · Premium cockpit actief")
 PAGES = [
     "Vandaag",
     "Dashboard",
@@ -199,6 +228,9 @@ page = st.sidebar.selectbox(
     format_func=lambda item: NAVIGATION_LABELS[item],
     key="main_navigation",
 )
+selected_label = NAVIGATION_LABELS[page]
+selected_group = selected_label.split("·", 1)[0].strip()
+st.sidebar.caption(f"Actief onderdeel: {selected_group}")
 st.sidebar.divider()
 if backend_name() == "postgresql":
     st.sidebar.caption("Cloud actief · laptop en iPhone gebruiken dezelfde gegevens")
@@ -2101,3 +2133,12 @@ ROUTES = {
     "Mijn uitgangspunten": settings_page,
 }
 ROUTES[page]()
+st.markdown(
+    f"""
+    <div class="pv-footer">
+      <span>GeertOS · Freedom Edition</span>
+      <span>Veilig verbonden · {backend_name()} · Sprint 10D</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)

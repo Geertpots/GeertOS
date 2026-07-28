@@ -15,7 +15,18 @@ def css(dark: bool) -> str:
         --pv-green: #20c997; --pv-gold: #d5a64a; --pv-red: #ff6b6b;
     }}
     .stApp {{ background: var(--pv-bg); color: var(--pv-text); }}
-    [data-testid="stSidebar"] {{ background: var(--pv-panel); }}
+    html {{ scroll-behavior: smooth; }}
+    body {{
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+    }}
+    [data-testid="stSidebar"] {{
+        background: var(--pv-panel);
+        border-right: 1px solid var(--pv-border);
+    }}
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
+        gap: .75rem;
+    }}
     [data-testid="stHeader"] {{ background: transparent; }}
     h1, h2, h3, p, label {{
         color: var(--pv-text) !important;
@@ -33,6 +44,7 @@ def css(dark: bool) -> str:
     .pv-hero {{
         padding: 1.5rem 1.65rem; border: 1px solid var(--pv-border);
         border-radius: 20px; margin: .25rem 0 1.3rem;
+        box-shadow: 0 12px 32px rgba(20,33,61,.06);
         background: linear-gradient(135deg, var(--pv-panel), rgba(32,201,151,.10));
     }}
     .pv-kicker {{
@@ -58,6 +70,7 @@ def css(dark: bool) -> str:
         display: flex; flex: 0 1 32rem; flex-direction: column; min-width: 0;
         padding: .85rem 1rem; border-radius: 14px;
         border: 1px solid var(--pv-border); background: var(--pv-panel);
+        box-shadow: 0 8px 24px rgba(20,33,61,.05);
     }}
     .pv-status span {{ font-size: 1.05rem; font-weight: 800; }}
     .pv-status small {{
@@ -70,6 +83,12 @@ def css(dark: bool) -> str:
         background: var(--pv-panel); border: 1px solid var(--pv-border);
         padding: 1rem 1.1rem; border-radius: 16px;
         width: 100%; max-width: 100%; min-width: 0;
+        box-shadow: 0 8px 24px rgba(20,33,61,.045);
+        transition: transform .16s ease, border-color .16s ease;
+    }}
+    [data-testid="stMetric"]:hover {{
+        transform: translateY(-1px);
+        border-color: rgba(32,201,151,.55);
     }}
     [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
         min-width: 0;
@@ -77,6 +96,7 @@ def css(dark: bool) -> str:
     [data-testid="stMetricLabel"] {{ color: var(--pv-muted); }}
     [data-testid="stDataFrame"], [data-testid="stTable"], [data-testid="stForm"] {{
         border: 1px solid var(--pv-border); border-radius: 16px;
+        background: var(--pv-panel);
     }}
     [data-testid="stDataFrame"], [data-testid="stTable"] {{
         display: block;
@@ -90,13 +110,69 @@ def css(dark: bool) -> str:
     [data-testid="stTable"] > div {{
         min-width: max-content;
     }}
-    .stButton > button, .stDownloadButton > button {{
-        border-radius: 10px; border: 0; font-weight: 700;
-        background: var(--pv-green); color: #07130f;
+    .stButton > button, .stDownloadButton > button,
+    [data-testid="stBaseButton-primary"],
+    [data-testid="stBaseButton-secondary"] {{
+        border-radius: 12px !important;
+        border: 1px solid rgba(32,201,151,.45) !important;
+        font-weight: 700 !important;
+        background: var(--pv-green) !important;
+        color: #07130f !important;
+        min-height: 2.65rem;
+        transition: transform .14s ease, filter .14s ease;
+    }}
+    .stButton > button:hover, .stDownloadButton > button:hover,
+    [data-testid="stBaseButton-primary"]:hover,
+    [data-testid="stBaseButton-secondary"]:hover {{
+        filter: brightness(.96);
+        transform: translateY(-1px);
+    }}
+    .stButton > button:focus-visible, .stDownloadButton > button:focus-visible {{
+        outline: 3px solid rgba(32,201,151,.35) !important;
+        outline-offset: 2px;
+    }}
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea,
+    [data-testid="stNumberInput"] input,
+    [data-baseweb="select"] > div {{
+        border-radius: 12px !important;
+        border-color: var(--pv-border) !important;
+        background: var(--pv-panel) !important;
+        color: var(--pv-text) !important;
+    }}
+    [data-testid="stExpander"] {{
+        border: 1px solid var(--pv-border);
+        border-radius: 14px;
+        background: var(--pv-panel);
+        overflow: hidden;
+    }}
+    [data-testid="stPlotlyChart"] {{
+        border: 1px solid var(--pv-border);
+        border-radius: 16px;
+        padding: .35rem;
+        background: var(--pv-panel);
+        overflow: hidden;
+    }}
+    .pv-section-title {{
+        margin: 1.4rem 0 .65rem;
+        color: var(--pv-text);
+        font-size: 1.08rem;
+        font-weight: 800;
+        letter-spacing: -.01em;
     }}
     .pv-note {{
         padding: .8rem 1rem; border-left: 3px solid var(--pv-gold);
         background: var(--pv-panel); color: var(--pv-muted); border-radius: 8px;
+    }}
+    .pv-footer {{
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-top: 2.5rem;
+        padding: 1rem .2rem .25rem;
+        border-top: 1px solid var(--pv-border);
+        color: var(--pv-muted);
+        font-size: .8rem;
     }}
     @media (max-width: 700px) {{
         .block-container {{
@@ -115,6 +191,7 @@ def css(dark: bool) -> str:
             line-height: 1.15;
         }}
         .pv-status {{ min-width: 0; width: 100%; }}
+        .pv-kicker {{ font-size: .7rem; letter-spacing: .09em; }}
         .pv-hero h1 {{
             font-size: clamp(1.65rem, 8vw, 2.15rem);
             line-height: 1.15;
@@ -150,6 +227,23 @@ def css(dark: bool) -> str:
             width: 100%;
             min-height: 2.75rem;
             white-space: normal;
+        }}
+        .pv-footer {{
+            flex-direction: column;
+            gap: .25rem;
+            margin-top: 1.75rem;
+        }}
+        [data-testid="stPlotlyChart"] {{
+            padding: 0;
+            border-radius: 12px;
+        }}
+    }}
+    @media (prefers-reduced-motion: reduce) {{
+        html {{ scroll-behavior: auto; }}
+        *, *::before, *::after {{
+            animation-duration: .01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: .01ms !important;
         }}
     }}
     </style>
