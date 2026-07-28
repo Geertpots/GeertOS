@@ -20,6 +20,7 @@ from calculations import (
 from financial_engine import FinancialEngine
 from cockpit import daily_insights, greeting, plan_status
 from planning_analysis import compare_scenarios
+from advisor import answer_question
 from database import (
     SyncConflictError,
     backend_name,
@@ -146,7 +147,7 @@ if access_control_enabled():
     st.sidebar.caption("🔒 Toegangscode actief")
 else:
     st.sidebar.caption("💻 Alleen lokaal · geen toegangscode ingesteld")
-st.sidebar.success("Sprint 10B · Tijdlijn & scenario's actief")
+st.sidebar.success("Sprint 10C · Veilige adviseur actief")
 st.sidebar.caption(f"Bronmap: {__file__}")
 PAGES = [
     "Vandaag",
@@ -164,6 +165,7 @@ PAGES = [
     "Netto maandinkomen",
     "Uitgavenplanner",
     "Scenarioanalyse",
+    "AI-assistent",
     "Plancontrole",
     "Beslislab",
     "Grafieken",
@@ -185,6 +187,7 @@ NAVIGATION_LABELS = {
     "Netto maandinkomen": "🎯 Vrijheid · Netto maandinkomen",
     "Uitgavenplanner": "💰 Vermogen · Uitgavenplanner",
     "Scenarioanalyse": "📊 Analyse · Scenarioanalyse",
+    "AI-assistent": "🤖 Adviseur · AI-assistent",
     "Plancontrole": "📊 Analyse · Plancontrole",
     "Beslislab": "📊 Analyse · Beslislab",
     "Grafieken": "📊 Analyse · Grafieken",
@@ -394,6 +397,7 @@ def today_page() -> None:
         ("👴", "Opa-fonds"),
         ("📊", "Plancontrole"),
         ("🔎", "Persoonlijke waarheid"),
+        ("🤖", "AI-assistent"),
     ]
     for start in range(0, len(quick_links), 4):
         columns = st.columns(4)
@@ -1408,6 +1412,64 @@ def scenario_analysis_page() -> None:
     )
 
 
+def advisor_page() -> None:
+    page_header(
+        "GeertOS AI-assistent",
+        "Stel financiële vragen in gewone taal en krijg een controleerbare berekening.",
+    )
+    st.info(
+        "Veilige analysemodus: de assistent kan alleen lezen en rekenen. "
+        "Hij kan nooit zelfstandig gegevens, instellingen of transacties wijzigen."
+    )
+
+    examples = [
+        "Wat gebeurt er als het pand € 1.575.000 oplevert?",
+        "Kan ik € 500 per maand extra besteden?",
+        "Wat gebeurt er als Bitcoin 20% daalt?",
+        "Kan ik veilig € 80.000 aan een camper besteden?",
+        "Wanneer ben ik financieel onafhankelijk?",
+    ]
+    st.write("**Voorbeeldvragen**")
+    columns = st.columns(2)
+    for index, example in enumerate(examples):
+        columns[index % 2].button(
+            example,
+            key=f"advisor_example_{index}",
+            use_container_width=True,
+            on_click=lambda value=example: st.session_state.update(
+                advisor_question=value
+            ),
+        )
+
+    question = st.text_area(
+        "Jouw vraag",
+        key="advisor_question",
+        placeholder="Bijvoorbeeld: Kan ik € 500 per maand extra besteden?",
+        height=100,
+    )
+    if st.button("Analyseer mijn vraag", type="primary", use_container_width=True):
+        if not question.strip():
+            st.warning("Vul eerst een vraag in.")
+        else:
+            answer = answer_question(question, make_engine(), settings)
+            getattr(st, answer.level)(f"**{answer.title}**\n\n{answer.message}")
+            for detail in answer.details:
+                st.write(f"• {detail}")
+            st.button(
+                f"Bekijk {answer.destination}",
+                key="advisor_destination",
+                on_click=navigate_to,
+                args=(answer.destination,),
+            )
+
+    st.divider()
+    st.caption(
+        "Deze versie gebruikt geen externe of betaalde AI-dienst. Antwoorden "
+        "komen uit vaste, testbare regels en de centrale GeertOS-rekenmotor. "
+        "Bedragen blijven binnen GeertOS."
+    )
+
+
 def personal_truth_page() -> None:
     page_header(
         "Persoonlijke financiële waarheid",
@@ -2032,6 +2094,7 @@ ROUTES = {
     "Netto maandinkomen": income_page,
     "Uitgavenplanner": expenses_page,
     "Scenarioanalyse": scenario_analysis_page,
+    "AI-assistent": advisor_page,
     "Plancontrole": plan_check_page,
     "Beslislab": decision_lab_page,
     "Grafieken": charts_page,
