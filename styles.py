@@ -46,14 +46,16 @@ def css(dark: bool) -> str:
         gap: 1.25rem; padding: 1.5rem 1.65rem;
         border: 1px solid var(--pv-border); border-radius: 20px;
         margin: .25rem 0 1.3rem;
+        width: 100%; max-width: 100%; min-width: 0; overflow: hidden;
         background: linear-gradient(135deg, var(--pv-panel), rgba(32,201,151,.10));
     }}
+    .pv-today-hero > div {{ min-width: 0; }}
     .pv-today-hero h1 {{
         margin: .3rem 0 .15rem; font-size: clamp(1.8rem, 4vw, 3rem);
     }}
     .pv-today-hero p {{ color: var(--pv-muted) !important; margin: 0; }}
     .pv-status {{
-        display: flex; flex-direction: column; min-width: 15rem;
+        display: flex; flex: 0 1 32rem; flex-direction: column; min-width: 0;
         padding: .85rem 1rem; border-radius: 14px;
         border: 1px solid var(--pv-border); background: var(--pv-panel);
     }}
@@ -67,6 +69,10 @@ def css(dark: bool) -> str:
     [data-testid="stMetric"] {{
         background: var(--pv-panel); border: 1px solid var(--pv-border);
         padding: 1rem 1.1rem; border-radius: 16px;
+        width: 100%; max-width: 100%; min-width: 0;
+    }}
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
+        min-width: 0;
     }}
     [data-testid="stMetricLabel"] {{ color: var(--pv-muted); }}
     [data-testid="stDataFrame"], [data-testid="stTable"], [data-testid="stForm"] {{
