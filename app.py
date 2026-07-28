@@ -24,7 +24,10 @@ from calculations import (
     decision_label,
 )
 from database import (
+    SyncConflictError,
+    backend_name,
     get_settings,
+    get_sync_version,
     init_db,
     read_table,
     replace_balance_with_freedom_plan,
@@ -47,6 +50,22 @@ st.set_page_config(
 require_access()
 init_db()
 settings = get_settings()
+
+if "_sync_notice" in st.session_state:
+    st.warning(st.session_state.pop("_sync_notice"))
+
+
+def save_synced_table(
+    table: str,
+    frame: pd.DataFrame,
+    expected_version: int,
+) -> None:
+    """Sla centraal op en herlaad veilig bij een gelijktijdige wijziging."""
+    try:
+        replace_table(table, frame, expected_version=expected_version)
+    except SyncConflictError as exc:
+        st.session_state["_sync_notice"] = str(exc)
+        st.rerun()
 
 
 def number(key: str, default: float = 0.0) -> float:
@@ -123,7 +142,7 @@ st.markdown(css(dark_mode), unsafe_allow_html=True)
 
 st.sidebar.markdown("## 🟦 GeertOS")
 st.sidebar.caption("Freedom Edition · financiële cockpit")
-st.sidebar.success("✅ Sprint 7 · Project Vrijheid actief")
+st.sidebar.success("✅ Sprint 8B · Cloud-synchronisatie actief")
 if access_control_enabled():
     st.sidebar.caption("🔒 Toegangscode actief")
 else:
@@ -149,9 +168,10 @@ PAGES = [
 ]
 page = st.sidebar.radio("Navigatie", PAGES, label_visibility="collapsed")
 st.sidebar.divider()
-st.sidebar.caption(
-    "Lokale app · gegevens worden uitsluitend opgeslagen in de SQLite-database."
-)
+if backend_name() == "postgresql":
+    st.sidebar.caption("Cloud actief · laptop en iPhone gebruiken dezelfde gegevens")
+else:
+    st.sidebar.caption("Lokale herstelmodus · gegevens staan in SQLite")
 
 
 def parse_date(value: object) -> date | None:
@@ -385,6 +405,7 @@ def balance_page() -> None:
         "Netto vermogen",
         "Bezittingen en schulden overzichtelijk op één balans.",
     )
+    sync_version = get_sync_version("balance_items")
     frame = read_table("balance_items")
     assets = frame.loc[frame["item_type"] == "asset", "amount"].sum()
     debts = frame.loc[frame["item_type"] == "liability", "amount"].sum()
@@ -415,7 +436,7 @@ def balance_page() -> None:
         key="balance_editor",
     )
     if st.button("Balans opslaan", type="primary"):
-        replace_table("balance_items", edited)
+        save_synced_table("balance_items", edited, sync_version)
         st.success("Balans opgeslagen.")
         st.rerun()
 
@@ -425,6 +446,7 @@ def etf_page() -> None:
         "ETF-portefeuille",
         "Verdeling, rendement en actuele waarde van je beleggingen.",
     )
+    sync_version = get_sync_version("etf_positions")
     frame = read_table("etf_positions")
     summary = portfolio_summary(frame)
     a, b, c = st.columns(3)
@@ -477,7 +499,7 @@ def etf_page() -> None:
         key="etf_editor",
     )
     if st.button("ETF-portefeuille opslaan", type="primary"):
-        replace_table("etf_positions", edited)
+        save_synced_table("etf_positions", edited, sync_version)
         set_settings({"etf_start": float(edited["value"].sum())})
         st.success("ETF-portefeuille opgeslagen.")
         st.rerun()
@@ -488,6 +510,7 @@ def bitcoin_page() -> None:
         "Bitcoin-portefeuille",
         "Leg aankopen vast en volg kostprijs, bezit en actuele waarde.",
     )
+    sync_version = get_sync_version("bitcoin_transactions")
     frame = read_table("bitcoin_transactions")
     total_btc = float(frame["btc_amount"].sum()) if not frame.empty else 0.0
     total_cost = float(frame["amount_eur"].sum()) if not frame.empty else 0.0
@@ -533,7 +556,9 @@ def bitcoin_page() -> None:
         except ValueError as exc:
             st.error(str(exc))
         else:
-            replace_table("bitcoin_transactions", clean_transactions)
+            save_synced_table(
+                "bitcoin_transactions", clean_transactions, sync_version
+            )
             set_settings({"bitcoin_current_price": current_price})
             st.success("Bitcoin-portefeuille opgeslagen.")
             st.rerun()
@@ -940,6 +965,7 @@ def expenses_page() -> None:
         "Uitgavenplanner",
         "Breng vaste lasten én ruimte om te genieten samen in één maandbudget.",
     )
+    sync_version = get_sync_version("expenses")
     frame = read_table("expenses")
     total = float(frame["monthly_amount"].sum())
     target = number("target_monthly", 4000)
@@ -963,7 +989,7 @@ def expenses_page() -> None:
         key="expense_editor",
     )
     if st.button("Uitgaven opslaan", type="primary"):
-        replace_table("expenses", edited)
+        save_synced_table("expenses", edited, sync_version)
         st.success("Uitgaven opgeslagen.")
         st.rerun()
 
@@ -1279,6 +1305,7 @@ def decision_lab_page() -> None:
 
 def family_page() -> None:
     page_header("Familie", "De mensen die centraal staan in jouw GeertOS.")
+    sync_version = get_sync_version("family_members")
     frame = read_table("family_members")
     if frame.empty:
         st.info("Er staan nog geen familieleden in GeertOS.")
@@ -1331,7 +1358,7 @@ def family_page() -> None:
         key="family_editor",
     )
     if st.button("Familiegegevens opslaan", type="primary"):
-        replace_table("family_members", edited)
+        save_synced_table("family_members", edited, sync_version)
         st.success("Familiegegevens opgeslagen.")
         st.rerun()
 
@@ -1339,6 +1366,7 @@ def family_page() -> None:
 def opa_fund_page() -> None:
     page_header("Opa-fonds", "Voor ieder kleinkind werken naar € 25.000 op de achttiende verjaardag.")
     summary = opa_summary()
+    funds_sync_version = get_sync_version("opa_funds")
     funds = read_table("opa_funds")
     transactions = read_table("opa_transactions")
 
@@ -1409,7 +1437,7 @@ def opa_fund_page() -> None:
         key="opa_funds_editor",
     )
     if st.button("Opa-fonds instellingen opslaan"):
-        replace_table("opa_funds", edited_funds)
+        save_synced_table("opa_funds", edited_funds, funds_sync_version)
         st.success("Instellingen opgeslagen.")
         st.rerun()
 
