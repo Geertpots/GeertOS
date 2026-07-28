@@ -110,12 +110,21 @@ def css(dark: bool) -> str:
     [data-testid="stTable"] > div {{
         min-width: max-content;
     }}
-    .stButton > button, .stDownloadButton > button,
-    [data-testid="stBaseButton-primary"],
+    .stButton > button:not([data-testid="stBaseButton-primary"]),
+    .stDownloadButton > button,
     [data-testid="stBaseButton-secondary"] {{
         border-radius: 12px !important;
-        border: 1px solid rgba(32,201,151,.45) !important;
+        border: 1px solid var(--pv-border) !important;
         font-weight: 700 !important;
+        background: var(--pv-panel) !important;
+        color: var(--pv-text) !important;
+        min-height: 2.65rem;
+        transition: transform .14s ease, filter .14s ease;
+    }}
+    [data-testid="stBaseButton-primary"] {{
+        border-radius: 12px !important;
+        border: 1px solid rgba(32,201,151,.55) !important;
+        font-weight: 800 !important;
         background: var(--pv-green) !important;
         color: #07130f !important;
         min-height: 2.65rem;
@@ -159,6 +168,13 @@ def css(dark: bool) -> str:
         font-size: 1.08rem;
         font-weight: 800;
         letter-spacing: -.01em;
+    }}
+    [data-testid="stForm"] {{
+        padding: .35rem !important;
+        box-shadow: none;
+    }}
+    [data-testid="stForm"] [data-testid="stHorizontalBlock"] {{
+        align-items: end;
     }}
     .pv-note {{
         padding: .8rem 1rem; border-left: 3px solid var(--pv-gold);
@@ -227,6 +243,9 @@ def css(dark: bool) -> str:
             width: 100%;
             min-height: 2.75rem;
             white-space: normal;
+        }}
+        [data-testid="stForm"] [data-testid="stHorizontalBlock"] {{
+            gap: .45rem;
         }}
         .pv-footer {{
             flex-direction: column;

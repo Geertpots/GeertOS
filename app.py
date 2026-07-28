@@ -177,7 +177,7 @@ if access_control_enabled():
     st.sidebar.caption("🔒 Toegangscode actief")
 else:
     st.sidebar.caption("💻 Alleen lokaal · geen toegangscode ingesteld")
-st.sidebar.success("Sprint 10D · Premium cockpit actief")
+st.sidebar.success("Sprint 10E · Dagelijkse cockpit actief")
 PAGES = [
     "Vandaag",
     "Dashboard",
@@ -308,6 +308,53 @@ def navigate_to(destination: str) -> None:
     st.session_state["main_navigation"] = destination
 
 
+def render_advisor_answer(answer: object, *, key: str) -> None:
+    """Toon een adviseursantwoord overal op dezelfde veilige manier."""
+    getattr(st, answer.level)(f"**{answer.title}**\n\n{answer.message}")
+    if answer.details:
+        with st.expander("Bekijk de onderbouwing"):
+            for detail in answer.details:
+                st.write(f"• {detail}")
+    st.button(
+        f"Bekijk {answer.destination}",
+        key=f"{key}_destination",
+        on_click=navigate_to,
+        args=(answer.destination,),
+    )
+
+
+def render_today_advisor() -> None:
+    """Compacte centrale ingang naar de bestaande veilige adviseur."""
+    st.markdown(
+        '<div class="pv-section-title">Waar kan ik je vandaag mee helpen?</div>',
+        unsafe_allow_html=True,
+    )
+    with st.form("today_advisor_form", border=False):
+        left, right = st.columns([5, 1])
+        question = left.text_input(
+            "Financiële vraag",
+            placeholder="Bijvoorbeeld: wat als Bitcoin 20% stijgt?",
+            label_visibility="collapsed",
+        )
+        submitted = right.form_submit_button(
+            "Analyseer",
+            type="primary",
+            use_container_width=True,
+        )
+    if submitted:
+        if not question.strip():
+            st.warning("Vul eerst een vraag in.")
+        else:
+            answer = answer_question(question, make_engine(), settings)
+            render_advisor_answer(answer, key="today_advisor")
+            st.button(
+                "Open volledige AI-assistent",
+                key="today_open_advisor",
+                on_click=navigate_to,
+                args=("AI-assistent",),
+            )
+
+
 def today_page() -> None:
     """Centrale dagelijkse cockpit, gevoed door één financiële momentopname."""
     now = datetime.now()
@@ -346,6 +393,8 @@ def today_page() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+    render_today_advisor()
 
     st.markdown(
         '<div class="pv-section-title">Hoe je er vandaag voor staat</div>',
@@ -405,44 +454,70 @@ def today_page() -> None:
         '<div class="pv-section-title">Belangrijk vandaag</div>',
         unsafe_allow_html=True,
     )
-    for index, insight in enumerate(insights):
-        message = f"**{insight.title}**  \n{insight.message}"
-        getattr(st, insight.level)(message)
-        st.button(
-            f"Bekijk {insight.destination}",
-            key=f"today_insight_{index}",
-            on_click=navigate_to,
-            args=(insight.destination,),
-        )
+    primary_insight = insights[0]
+    getattr(st, primary_insight.level)(
+        f"**{primary_insight.title}**  \n{primary_insight.message}"
+    )
+    st.button(
+        f"Bekijk {primary_insight.destination}",
+        key="today_insight_primary",
+        on_click=navigate_to,
+        args=(primary_insight.destination,),
+    )
+    if len(insights) > 1:
+        with st.expander(f"Nog {len(insights) - 1} aandachtspunt(en)"):
+            for index, insight in enumerate(insights[1:], start=1):
+                st.write(f"**{insight.title}**  \n{insight.message}")
+                st.button(
+                    f"Bekijk {insight.destination}",
+                    key=f"today_insight_{index}",
+                    on_click=navigate_to,
+                    args=(insight.destination,),
+                )
 
     st.markdown(
-        '<div class="pv-section-title">Direct naar</div>',
+        '<div class="pv-section-title">Snelle acties</div>',
         unsafe_allow_html=True,
     )
-    quick_links = [
-        ("🎯", "Project Vrijheid"),
-        ("🗓️", "Vrijheidstijdlijn"),
-        ("💰", "Netto vermogen"),
-        ("📈", "ETF-portefeuille"),
-        ("🏦", "Pensioenplanning"),
-        ("👨‍👩‍👧", "Familie"),
-        ("👴", "Opa-fonds"),
-        ("📊", "Plancontrole"),
-        ("🔎", "Persoonlijke waarheid"),
-        ("🤖", "AI-assistent"),
+    quick_actions = [
+        ("＋ Bitcoin", "Bitcoin-portefeuille"),
+        ("＋ ETF", "ETF-portefeuille"),
+        ("＋ Uitgave", "Uitgavenplanner"),
+        ("↗ Scenario", "Scenarioanalyse"),
     ]
-    for start in range(0, len(quick_links), 4):
-        columns = st.columns(4)
-        for column, (icon, destination) in zip(
-            columns, quick_links[start:start + 4]
-        ):
-            column.button(
-                f"{icon} {destination}",
-                key=f"today_link_{destination}",
-                use_container_width=True,
-                on_click=navigate_to,
-                args=(destination,),
-            )
+    columns = st.columns(4)
+    for column, (label, destination) in zip(columns, quick_actions):
+        column.button(
+            label,
+            key=f"today_action_{destination}",
+            use_container_width=True,
+            on_click=navigate_to,
+            args=(destination,),
+        )
+
+    with st.expander("Meer onderdelen"):
+        more_links = [
+            ("Project Vrijheid", "Project Vrijheid"),
+            ("Tijdlijn", "Vrijheidstijdlijn"),
+            ("Vermogen", "Netto vermogen"),
+            ("Pensioen", "Pensioenplanning"),
+            ("Familie", "Familie"),
+            ("Opa-fonds", "Opa-fonds"),
+            ("Plancontrole", "Plancontrole"),
+            ("Persoonlijke waarheid", "Persoonlijke waarheid"),
+        ]
+        for start in range(0, len(more_links), 4):
+            link_columns = st.columns(4)
+            for column, (label, destination) in zip(
+                link_columns, more_links[start:start + 4]
+            ):
+                column.button(
+                    label,
+                    key=f"today_more_{destination}",
+                    use_container_width=True,
+                    on_click=navigate_to,
+                    args=(destination,),
+                )
 
     st.caption(
         "Alle bedragen op deze pagina komen uit dezelfde centrale rekenmotor "
@@ -1484,15 +1559,7 @@ def advisor_page() -> None:
             st.warning("Vul eerst een vraag in.")
         else:
             answer = answer_question(question, make_engine(), settings)
-            getattr(st, answer.level)(f"**{answer.title}**\n\n{answer.message}")
-            for detail in answer.details:
-                st.write(f"• {detail}")
-            st.button(
-                f"Bekijk {answer.destination}",
-                key="advisor_destination",
-                on_click=navigate_to,
-                args=(answer.destination,),
-            )
+            render_advisor_answer(answer, key="advisor")
 
     st.divider()
     st.caption(
@@ -2137,7 +2204,7 @@ st.markdown(
     f"""
     <div class="pv-footer">
       <span>GeertOS · Freedom Edition</span>
-      <span>Veilig verbonden · {backend_name()} · Sprint 10D</span>
+      <span>Veilig verbonden · {backend_name()} · Sprint 10E</span>
     </div>
     """,
     unsafe_allow_html=True,
