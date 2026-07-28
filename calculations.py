@@ -239,6 +239,27 @@ def sale_scenario_table(
     return pd.DataFrame(rows)
 
 
+def freedom_index_components(
+    monthly_expenses: float,
+    monthly_target: float,
+    projected_end_balance: float,
+    starting_investments: float,
+) -> dict[str, float | int]:
+    """Return the visible building blocks of the planning score."""
+    target = max(float(monthly_target), 1.0)
+    start = max(float(starting_investments), 1.0)
+    budget_score = max(0.0, min(100.0, 100.0 - abs(monthly_expenses - target) / target * 100.0))
+    reserve_score = max(0.0, min(100.0, projected_end_balance / start * 100.0))
+    total_score = round(0.55 * budget_score + 0.45 * reserve_score)
+    return {
+        "budget_score": budget_score,
+        "reserve_score": reserve_score,
+        "budget_weight_pct": 55,
+        "reserve_weight_pct": 45,
+        "total_score": total_score,
+    }
+
+
 def freedom_index(
     monthly_expenses: float,
     monthly_target: float,
@@ -246,11 +267,14 @@ def freedom_index(
     starting_investments: float,
 ) -> int:
     """Calculate a transparent 0-100 planning score."""
-    target = max(float(monthly_target), 1.0)
-    start = max(float(starting_investments), 1.0)
-    budget_score = max(0.0, min(100.0, 100.0 - abs(monthly_expenses - target) / target * 100.0))
-    reserve_score = max(0.0, min(100.0, projected_end_balance / start * 100.0))
-    return round(0.55 * budget_score + 0.45 * reserve_score)
+    return int(
+        freedom_index_components(
+            monthly_expenses,
+            monthly_target,
+            projected_end_balance,
+            starting_investments,
+        )["total_score"]
+    )
 
 def monthly_income_projection(
     birth_date: date,

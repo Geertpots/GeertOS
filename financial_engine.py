@@ -11,6 +11,7 @@ import pandas as pd
 from calculations import (
     annuity_schedule,
     freedom_index,
+    freedom_index_components,
     monthly_income_projection,
     portfolio_summary,
     projection_health,
@@ -56,6 +57,7 @@ class FinancialResult:
     expenses_monthly: float
     planned_etf_start: float
     freedom_score: int
+    freedom_components: dict[str, float | int]
 
 
 class FinancialEngine:
@@ -235,6 +237,12 @@ class FinancialEngine:
             float(health["end_balance"]),
             max(planned_etf_start, 1.0),
         )
+        score_components = freedom_index_components(
+            expenses_monthly,
+            _number(values, "target_monthly", 4_000),
+            float(health["end_balance"]),
+            max(planned_etf_start, 1.0),
+        )
         return FinancialResult(
             sale=sale,
             annuity=annuity,
@@ -250,6 +258,7 @@ class FinancialEngine:
             expenses_monthly=expenses_monthly,
             planned_etf_start=planned_etf_start,
             freedom_score=score,
+            freedom_components=score_components,
         )
 
     def stress_table(

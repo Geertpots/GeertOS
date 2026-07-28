@@ -19,6 +19,7 @@ from calculations import (
 )
 from financial_engine import FinancialEngine
 from cockpit import daily_insights, greeting, plan_status
+from planning_analysis import compare_scenarios
 from database import (
     SyncConflictError,
     backend_name,
@@ -145,7 +146,7 @@ if access_control_enabled():
     st.sidebar.caption("🔒 Toegangscode actief")
 else:
     st.sidebar.caption("💻 Alleen lokaal · geen toegangscode ingesteld")
-st.sidebar.success("Sprint 10A · Intelligente cockpit actief")
+st.sidebar.success("Sprint 10B · Tijdlijn & scenario's actief")
 st.sidebar.caption(f"Bronmap: {__file__}")
 PAGES = [
     "Vandaag",
@@ -154,6 +155,7 @@ PAGES = [
     "Familie",
     "Opa-fonds",
     "Project Vrijheid",
+    "Vrijheidstijdlijn",
     "Netto vermogen",
     "ETF-portefeuille",
     "Bitcoin-portefeuille",
@@ -174,6 +176,7 @@ NAVIGATION_LABELS = {
     "Familie": "👨‍👩‍👧 Familie · Overzicht",
     "Opa-fonds": "👨‍👩‍👧 Familie · Opa-fonds",
     "Project Vrijheid": "🎯 Vrijheid · Project Vrijheid",
+    "Vrijheidstijdlijn": "🎯 Vrijheid · Tijdlijn 2026–2047",
     "Netto vermogen": "💰 Vermogen · Netto vermogen",
     "ETF-portefeuille": "📈 Beleggingen · ETF",
     "Bitcoin-portefeuille": "📈 Beleggingen · Bitcoin",
@@ -342,6 +345,18 @@ def today_page() -> None:
     score = max(0, min(100, int(result.freedom_score)))
     st.progress(score / 100, text=f"Vrijheidsstatus: {score}%")
     with st.expander("Hoe wordt deze status bepaald?"):
+        components = result.freedom_components
+        left, right = st.columns(2)
+        left.metric(
+            "Inkomen op koers",
+            f"{int(components['budget_score'])}%",
+            "weegt voor 55%",
+        )
+        right.metric(
+            "Buffer in 2047",
+            f"{int(components['reserve_score'])}%",
+            "weegt voor 45%",
+        )
         st.write(
             "De status gebruikt uitsluitend de centrale GeertOS-berekeningen: "
             "je werkelijke uitgaven, gewenste maandinkomen, resterend vermogen "
@@ -371,6 +386,7 @@ def today_page() -> None:
     )
     quick_links = [
         ("🎯", "Project Vrijheid"),
+        ("🗓️", "Vrijheidstijdlijn"),
         ("💰", "Netto vermogen"),
         ("📈", "ETF-portefeuille"),
         ("🏦", "Pensioenplanning"),
@@ -1253,62 +1269,143 @@ def expenses_page() -> None:
 
 
 
+def freedom_timeline_page() -> None:
+    page_header(
+        "Tijdlijn financiële vrijheid",
+        "Bekijk per jaar hoe inkomen, pensioen, AOW en ETF-vermogen zich ontwikkelen.",
+    )
+    result = make_engine().evaluate()
+    projection = result.projection.copy()
+    projection["tekort"] = (projection["target"] - projection["actual"]).clip(lower=0)
+    projection["overschot"] = (projection["actual"] - projection["target"]).clip(lower=0)
+
+    wealth_fig = go.Figure()
+    wealth_fig.add_trace(
+        go.Scatter(
+            x=projection["year"],
+            y=projection["etf_closing"],
+            mode="lines+markers",
+            name="ETF-restvermogen",
+            line=dict(color="#20c997", width=3),
+        )
+    )
+    wealth_fig.update_layout(
+        title="Verwachte ontwikkeling ETF-vermogen",
+        xaxis_title="Jaar",
+        yaxis_title="Vermogen",
+        hovermode="x unified",
+    )
+    st.plotly_chart(chart_layout(wealth_fig, dark_mode), use_container_width=True)
+
+    income_fig = go.Figure()
+    for column, label, color in [
+        ("target", "Gewenst netto inkomen", "#d5a64a"),
+        ("actual", "Berekend netto inkomen", "#5b8def"),
+    ]:
+        income_fig.add_trace(
+            go.Scatter(
+                x=projection["year"],
+                y=projection[column],
+                mode="lines",
+                name=label,
+                line=dict(color=color, width=3),
+            )
+        )
+    income_fig.update_layout(
+        title="Netto maandinkomen tegenover doel",
+        xaxis_title="Jaar",
+        yaxis_title="Per maand",
+        hovermode="x unified",
+    )
+    st.plotly_chart(chart_layout(income_fig, dark_mode), use_container_width=True)
+
+    years = projection["year"].astype(int).tolist()
+    selected_year = st.slider(
+        "Kies een jaar",
+        min_value=min(years),
+        max_value=max(years),
+        value=min(years),
+        step=1,
+    )
+    row = projection.loc[projection["year"].astype(int) == selected_year].iloc[0]
+    st.subheader(f"Details {selected_year}")
+    a, b, c, d = st.columns(4)
+    a.metric("Netto maandinkomen", money(float(row["actual"])))
+    b.metric("Gewenst maandinkomen", money(float(row["target"])))
+    c.metric("ETF-restvermogen", money(float(row["etf_closing"])))
+    d.metric("ETF-opname per maand", money(float(row["etf_withdrawal"])))
+
+    a, b, c, d = st.columns(4)
+    a.metric("Pensioen", money(float(row["pension"])))
+    b.metric("Lijfrente", money(float(row["annuity"])))
+    c.metric("AOW", money(float(row["aow"])))
+    if float(row["tekort"]) > 0:
+        d.metric("Tekort", money(float(row["tekort"])), "aandacht nodig")
+    else:
+        d.metric("Overschot", money(float(row["overschot"])), "per maand")
+
+    st.info(
+        f"Bitcoin: {money(result.bitcoin_value)} huidige waarde. "
+        "GeertOS projecteert Bitcoin bewust niet naar toekomstige jaren, "
+        "omdat daarvoor geen betrouwbare groeiaanname is vastgelegd."
+    )
+    st.caption(
+        "Alle waarden komen rechtstreeks uit de centrale GeertOS-rekenmotor. "
+        "Een keuze op deze pagina wijzigt geen opgeslagen gegevens."
+    )
+
+
 def scenario_analysis_page() -> None:
     page_header(
-        "Scenarioanalyse",
-        "Vergelijk meerdere verkoopprijzen naast elkaar en zie direct de invloed op je netto cash.",
+        "Scenariovergelijker",
+        "Vergelijk voorzichtig, verwacht en optimistisch op dezelfde financiële uitgangspunten.",
     )
-    base_price = number("sale_property_price", 1595000)
-    c1, c2, c3 = st.columns(3)
-    low = c1.number_input("Voorzichtig", min_value=0.0, value=max(0.0, base_price - 145000), step=25000.0)
-    expected = c2.number_input("Verwacht", min_value=0.0, value=base_price, step=25000.0)
-    high = c3.number_input("Optimistisch", min_value=0.0, value=base_price + 105000, step=25000.0)
-
-    frame = make_engine().scenario_table([low, expected, high])
-    frame.insert(0, "scenario", ["Voorzichtig", "Verwacht", "Optimistisch"])
-    goal = number("sale_net_cash_goal", 600000)
-    frame["difference_to_goal"] = frame["net_cash"] - goal
+    frame = compare_scenarios(make_engine(), settings)
 
     cards = st.columns(3)
     for index, row in frame.iterrows():
         cards[index].metric(
-            row["scenario"],
-            money(row["net_cash"]),
-            money(row["difference_to_goal"]),
+            str(row["Scenario"]),
+            money(float(row["Netto vermogen na verkoop"])),
+            f"Risico: {row['Risico']}",
         )
 
     fig = px.bar(
         frame,
-        x="scenario",
-        y="net_cash",
-        color="scenario",
-        title="Netto cash per scenario",
-        labels={"scenario": "Scenario", "net_cash": "Netto cash"},
+        x="Scenario",
+        y="ETF-restvermogen 2047",
+        color="Scenario",
+        title="Verwacht ETF-restvermogen in 2047",
         color_discrete_sequence=["#ff8c61", "#20c997", "#5b8def"],
-    )
-    fig.add_hline(
-        y=goal,
-        line_dash="dash",
-        line_color="#d5a64a",
-        annotation_text=f"Doel {money(goal)}",
     )
     st.plotly_chart(chart_layout(fig, dark_mode), use_container_width=True)
 
-    display = frame.rename(
-        columns={
-            "scenario": "Scenario",
-            "property_price": "Verkoopprijs pand",
-            "gross": "Bruto verkoop",
-            "sale_costs": "Verkoopkosten",
-            "debt": "Schulden",
-            "tax": "Belasting",
-            "annuity": "Lijfrente",
-            "net_cash": "Netto cash",
-            "total_after_sale": "Totaal na verkoop",
-            "difference_to_goal": "Verschil met doel",
-        }
-    )
+    display = frame.copy()
+    for column in [
+        "Verkoopprijs pand",
+        "Netto cash",
+        "Netto vermogen na verkoop",
+        "ETF-restvermogen 2047",
+        "ETF-opname eerste jaar",
+        "Bitcoin-waarde",
+        "Netto inkomen eerste jaar",
+    ]:
+        display[column] = display[column].map(money)
+    display["ETF-rendement"] = display["ETF-rendement"].map(lambda value: f"{value:.1f}%")
+    display["Inflatie"] = display["Inflatie"].map(lambda value: f"{value:.1f}%")
+    display["Vrijheidsstatus"] = display["Vrijheidsstatus"].map(lambda value: f"{value}%")
     st.dataframe(display, hide_index=True, use_container_width=True)
+    with st.expander("Welke aannames verschillen?"):
+        st.write(
+            "Voorzichtig rekent met een lagere verkoopprijs, twee procentpunt "
+            "lager ETF-rendement, één procentpunt hogere inflatie en 20% lagere "
+            "Bitcoinwaarde. Optimistisch doet het omgekeerde met begrensde, "
+            "zichtbare afwijkingen. Verwacht gebruikt je opgeslagen planning."
+        )
+    st.caption(
+        "Scenario's zijn tijdelijke berekeningen. Ze worden niet opgeslagen en "
+        "wijzigen jouw persoonlijke financiële waarheid niet."
+    )
 
 
 def personal_truth_page() -> None:
@@ -1926,6 +2023,7 @@ ROUTES = {
     "Familie": family_page,
     "Opa-fonds": opa_fund_page,
     "Project Vrijheid": freedom_page,
+    "Vrijheidstijdlijn": freedom_timeline_page,
     "Netto vermogen": balance_page,
     "ETF-portefeuille": etf_page,
     "Bitcoin-portefeuille": bitcoin_page,
