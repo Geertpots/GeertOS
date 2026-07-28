@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -18,6 +18,20 @@ from config import sqlite_path
 
 
 DB_PATH = sqlite_path()
+
+SYNC_TABLES = (
+    "balance_items",
+    "etf_positions",
+    "bitcoin_transactions",
+    "expenses",
+    "family_members",
+    "opa_funds",
+    "opa_transactions",
+)
+
+
+class SyncConflictError(RuntimeError):
+    """Een ander apparaat heeft dezelfde gegevens inmiddels gewijzigd."""
 
 
 def init_db() -> None:
@@ -96,9 +110,27 @@ def init_db() -> None:
                 note TEXT DEFAULT ''
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS sync_state (
+                table_name TEXT PRIMARY KEY,
+                version BIGINT NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+            """,
         ]
         for statement in statements:
             db.execute(statement)
+        now = datetime.now(UTC).isoformat()
+        db.executemany(
+            placeholders(
+                """
+                INSERT INTO sync_state(table_name, version, updated_at)
+                VALUES (?, 0, ?)
+                ON CONFLICT(table_name) DO NOTHING
+                """
+            ),
+            [(table, now) for table in SYNC_TABLES],
+        )
         defaults = {
             "birth_date": "1964-12-21",
             "target_monthly": "4000",
@@ -224,7 +256,25 @@ def read_table(table: str) -> pd.DataFrame:
         return pd.DataFrame(rows, columns=columns)
 
 
-def replace_table(table: str, frame: pd.DataFrame) -> None:
+def get_sync_version(table: str) -> int:
+    """Geef het versienummer waarmee conflicten tussen apparaten worden herkend."""
+    if table not in SYNC_TABLES:
+        raise ValueError("Unknown table")
+    with connection() as db:
+        value = scalar(
+            db,
+            placeholders("SELECT version FROM sync_state WHERE table_name = ?"),
+            (table,),
+        )
+    return int(value or 0)
+
+
+def replace_table(
+    table: str,
+    frame: pd.DataFrame,
+    *,
+    expected_version: int | None = None,
+) -> None:
     allowed = {
         "balance_items": ["category", "name", "amount", "item_type"],
         "etf_positions": ["name", "ticker", "invested", "value"],
@@ -240,6 +290,35 @@ def replace_table(table: str, frame: pd.DataFrame) -> None:
     clean = frame.copy()
     clean = clean[[c for c in columns if c in clean.columns]]
     with connection() as db:
+        now = datetime.now(UTC).isoformat()
+        if expected_version is None:
+            cursor = db.execute(
+                placeholders(
+                    """
+                    UPDATE sync_state
+                    SET version = version + 1, updated_at = ?
+                    WHERE table_name = ?
+                    """
+                ),
+                (now, table),
+            )
+        else:
+            cursor = db.execute(
+                placeholders(
+                    """
+                    UPDATE sync_state
+                    SET version = version + 1, updated_at = ?
+                    WHERE table_name = ? AND version = ?
+                    """
+                ),
+                (now, table, expected_version),
+            )
+        if cursor.rowcount != 1:
+            raise SyncConflictError(
+                "Deze gegevens zijn intussen op een ander apparaat gewijzigd. "
+                "De nieuwste gegevens zijn opnieuw geladen; voer jouw wijziging "
+                "daarna nogmaals in."
+            )
         db.execute(f"DELETE FROM {table}")
         if not clean.empty:
             placeholder_marks = ",".join("?" for _ in clean.columns)
@@ -337,6 +416,16 @@ def replace_balance_with_freedom_plan(net_cash: float, annuity_reserve: float) -
     if net_cash < 0 or annuity_reserve < 0:
         raise ValueError("Balansbedragen mogen niet negatief zijn.")
     with connection() as db:
+        db.execute(
+            placeholders(
+                """
+                UPDATE sync_state
+                SET version = version + 1, updated_at = ?
+                WHERE table_name = ?
+                """
+            ),
+            (datetime.now(UTC).isoformat(), "balance_items"),
+        )
         db.execute("DELETE FROM balance_items")
         db.executemany(
             placeholders("""
@@ -375,6 +464,7 @@ def create_backup() -> Path:
         "family_members",
         "opa_funds",
         "opa_transactions",
+        "sync_state",
     ]
     manifest: dict[str, object] = {
         "created_at": datetime.now().isoformat(),
@@ -410,4 +500,14 @@ def add_opa_transaction(child_name: str, transaction_date: str, amount: float, n
                    ) VALUES (?,?,?,?)"""
             ),
             (child_name.strip(), transaction_date, float(amount), note.strip()),
+        )
+        db.execute(
+            placeholders(
+                """
+                UPDATE sync_state
+                SET version = version + 1, updated_at = ?
+                WHERE table_name = ?
+                """
+            ),
+            (datetime.now(UTC).isoformat(), "opa_transactions"),
         )
