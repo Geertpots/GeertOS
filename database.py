@@ -110,6 +110,7 @@ def init_db() -> None:
             "partner_pension_monthly": "350",
             "aow_combined_monthly": "2000",
             "side_income_monthly": "1500",
+            "bitcoin_current_price": "60000",
             "dark_mode": "1",
             "sale_property_price": "1595000",
             "sale_property_book": "885000",

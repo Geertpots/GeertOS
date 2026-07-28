@@ -41,7 +41,7 @@ st.set_page_config(
     page_title="GeertOS – Freedom Edition",
     page_icon="🟦",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 require_access()
 init_db()
@@ -122,7 +122,7 @@ st.markdown(css(dark_mode), unsafe_allow_html=True)
 
 st.sidebar.markdown("## 🟦 GeertOS")
 st.sidebar.caption("Freedom Edition · financiële cockpit")
-st.sidebar.success("✅ GeertOS 6.1 · Familie & Opa-fonds actief")
+st.sidebar.success("✅ Sprint 7 · Project Vrijheid actief")
 if access_control_enabled():
     st.sidebar.caption("🔒 Toegangscode actief")
 else:
@@ -220,35 +220,117 @@ def opa_summary() -> pd.DataFrame:
 
 def dashboard() -> None:
     page_header(
-        "Dashboard",
-        "In één oogopslag zien of je financiële vrijheid op koers ligt.",
+        "Project Vrijheid",
+        "Jouw financiële cockpit: verkoop, vermogen, inkomen en toekomst in één overzicht.",
     )
-    st.success("✅ Sprint 6.1 actief — Familie en Opa-fonds zijn nu onderdeel van jouw dashboard.")
+
     balance = read_table("balance_items")
-    assets = balance.loc[balance["item_type"] == "asset", "amount"].sum()
-    debts = balance.loc[balance["item_type"] == "liability", "amount"].sum()
+    assets = float(balance.loc[balance["item_type"] == "asset", "amount"].sum())
+    debts = float(balance.loc[balance["item_type"] == "liability", "amount"].sum())
+    current_net_worth = assets - debts
     etf = portfolio_summary(read_table("etf_positions"))
-    expenses = read_table("expenses")["monthly_amount"].sum()
+    bitcoin = read_table("bitcoin_transactions")
+    total_btc = float(bitcoin["btc_amount"].sum()) if not bitcoin.empty else 0.0
+    bitcoin_price = number("bitcoin_current_price", 60000)
+    bitcoin_value = total_btc * bitcoin_price
     projection = make_projection()
-    family = read_table("family_members")
-    opa = opa_summary()
-    grandchildren = family[family["relationship"] == "Kleinkind"] if not family.empty else family
-    total_opa = float(opa["current"].sum()) if not opa.empty else 0.0
-    total_opa_target = float(opa["target"].sum()) if not opa.empty else 75000.0
+    annuity = make_annuity()
+    annuity_monthly = (
+        float(annuity.iloc[0]["net_monthly"]) if not annuity.empty else 0.0
+    )
+    pension_monthly = (
+        number("own_pension_monthly", 145)
+        + number("partner_pension_monthly", 350)
+        + number("aow_combined_monthly", 2000)
+    )
 
-    st.markdown('<div class="pv-section-title">Jouw persoonlijke cockpit</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="pv-section-title">Financiële positie</div>',
+        unsafe_allow_html=True,
+    )
     a, b, c, d = st.columns(4)
-    a.metric("Familie", "5 kinderen", "3 kinderen + 2 bonusdochters")
-    b.metric("Kleinkinderen", str(len(grandchildren)), "Aydin · Sade · Isabel")
-    c.metric("Opa-fonds", money(total_opa), f"doel {money(total_opa_target)}")
-    d.metric("Opa-fonds voortgang", f"{(total_opa/total_opa_target*100 if total_opa_target else 0):.1f}%")
-
-    st.markdown('<div class="pv-section-title">Financiële vrijheid</div>', unsafe_allow_html=True)
-    a, b, c, d = st.columns(4)
-    a.metric("Netto vermogen", money(assets - debts))
+    a.metric("Netto vermogen", money(current_net_worth))
     b.metric("ETF-portefeuille", money(etf["value"]), f"{etf['return_pct']:.1f}%")
-    c.metric("Maandbudget", money(expenses))
-    d.metric("Vrijheidsdoel", money(number("target_monthly", 4000)))
+    c.metric("Bitcoin-portefeuille", money(bitcoin_value), f"{total_btc:.6f} BTC")
+    d.metric(
+        "Pensioen + lijfrente p/m",
+        money(pension_monthly + annuity_monthly),
+    )
+
+    st.markdown(
+        '<div class="pv-section-title">Verkoopscenario POTZ WONEN</div>',
+        unsafe_allow_html=True,
+    )
+    base_price = number("sale_property_price", 1595000)
+    scenario_price = st.slider(
+        "Verkoopprijs pand",
+        min_value=1300000,
+        max_value=1800000,
+        value=int(min(max(base_price, 1300000), 1800000)),
+        step=25000,
+        format="€ %d",
+        help="Schuif om direct te zien wat een andere verkoopprijs betekent.",
+        key="dashboard_sale_price",
+    )
+    sale = sale_scenario(
+        scenario_price,
+        number("sale_property_book", 885000),
+        number("sale_inventory_price", 275000),
+        number("sale_inventory_book", 335000),
+        number("sale_mortgage", 675000),
+        number("sale_business_credit", 100000),
+        number("sale_brokerage_pct", 1.75),
+        number("sale_tax_pct", 25.8),
+        number("sale_annuity_reserve", 250000),
+        other_loans=number("sale_other_loans", 125000),
+        brokerage_vat_pct=number("sale_brokerage_vat_pct", 21),
+        other_sale_costs=number("sale_other_costs", 0),
+    )
+    a, b, c, d = st.columns(4)
+    a.metric("Verkoopprijs pand", money(scenario_price))
+    b.metric("Bruto verkoop", money(sale["gross"]))
+    c.metric("Netto cash", money(sale["net_cash"]))
+    d.metric("Totaal na verkoop", money(sale["total_after_sale"]))
+
+    goal = number("sale_net_cash_goal", 600000)
+    difference = sale["net_cash"] - goal
+    if difference >= 0:
+        st.success(f"Dit scenario ligt {money(difference)} boven je netto-cashdoel.")
+    else:
+        st.warning(f"Dit scenario ligt {money(abs(difference))} onder je netto-cashdoel.")
+
+    if st.button(
+        "Gebruik deze verkoopprijs in Project Vrijheid",
+        use_container_width=True,
+    ):
+        set_settings({"sale_property_price": scenario_price})
+        st.success("De verkoopprijs is opgeslagen in Project Vrijheid.")
+
+    st.markdown(
+        '<div class="pv-section-title">Inkomen en vermogen tot 2047</div>',
+        unsafe_allow_html=True,
+    )
+    first_year = projection.iloc[0]
+    last_year = projection.iloc[-1]
+    a, b, c, d = st.columns(4)
+    a.metric(
+        f"Netto inkomen {int(first_year['year'])}",
+        money(float(first_year["actual"])),
+        "per maand",
+    )
+    b.metric(
+        "Gewenst netto p/m",
+        money(number("target_monthly", 4000)),
+    )
+    c.metric(
+        f"ETF-vermogen {int(last_year['year'])}",
+        money(float(last_year["etf_closing"])),
+    )
+    d.metric(
+        "ETF-opname eerste jaar",
+        money(float(first_year["etf_withdrawal"])),
+        "per maand",
+    )
 
     left, right = st.columns([1.6, 1])
     with left:
@@ -256,35 +338,32 @@ def dashboard() -> None:
             projection,
             x="year",
             y="etf_closing",
-            title="Verwacht ETF-vermogen",
+            title="Vermogensontwikkeling",
             labels={"year": "Jaar", "etf_closing": "Vermogen"},
             color_discrete_sequence=["#20c997"],
         )
         st.plotly_chart(chart_layout(fig, dark_mode), use_container_width=True)
     with right:
-        end_balance = float(projection.iloc[-1]["etf_closing"])
-        gap = number("target_monthly", 4000) - expenses
-        st.subheader("Vrijheidsindex")
-        target = max(number("target_monthly", 4000), 1)
-        index_score = freedom_index(
-            monthly_expenses=float(expenses),
-            monthly_target=target,
-            projected_end_balance=end_balance,
-            starting_investments=number("etf_start", 500000),
+        income_frame = projection[["year", "target", "actual"]].melt(
+            "year",
+            var_name="Reeks",
+            value_name="Netto per maand",
         )
-        st.progress(index_score / 100, text=f"{index_score}% · plan op koers")
-        st.metric("Ruimte t.o.v. doel", money(gap))
-        st.metric(
-            f"ETF-restvermogen in {integer('calculation_end_year', 2047)}",
-            money(end_balance),
+        income_frame["Reeks"] = income_frame["Reeks"].replace(
+            {"target": "Doel", "actual": "Beschikbaar"}
         )
-        st.markdown(
-            '<div class="pv-note">Groen betekent niet automatisch gegarandeerd. '
-            "Werk je bedragen regelmatig bij en vergelijk meerdere scenario’s.</div>",
-            unsafe_allow_html=True,
+        fig = px.line(
+            income_frame,
+            x="year",
+            y="Netto per maand",
+            color="Reeks",
+            title="Netto maandinkomen",
+            labels={"year": "Jaar"},
+            color_discrete_map={"Doel": "#d5a64a", "Beschikbaar": "#5b8def"},
         )
+        st.plotly_chart(chart_layout(fig, dark_mode), use_container_width=True)
 
-    st.subheader("Maandinkomen: eerstvolgende jaren")
+    st.subheader("Netto maandinkomen: eerstvolgende jaren")
     preview = projection.head(6).copy()
     preview.columns = [
         "Jaar",
@@ -414,7 +493,7 @@ def bitcoin_page() -> None:
     current_price = st.number_input(
         "Actuele Bitcoin-prijs",
         min_value=0.0,
-        value=60000.0,
+        value=number("bitcoin_current_price", 60000),
         step=500.0,
         format="%.2f",
         help="Vul handmatig de actuele koers in. Er is geen internetverbinding nodig.",
@@ -449,6 +528,7 @@ def bitcoin_page() -> None:
     )
     if st.button("Bitcoin-transacties opslaan", type="primary"):
         replace_table("bitcoin_transactions", edited)
+        set_settings({"bitcoin_current_price": current_price})
         st.success("Bitcoin-portefeuille opgeslagen.")
         st.rerun()
 
