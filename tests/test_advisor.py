@@ -18,6 +18,34 @@ def test_sale_question_uses_central_engine_without_changing_settings() -> None:
     assert engine.settings == original
 
 
+def test_inventory_question_uses_central_engine_without_saving() -> None:
+    engine = sample_engine()
+    original = engine.settings.copy()
+    answer = answer_question(
+        "Wat gebeurt er als de voorraad € 350.000 oplevert?",
+        engine,
+        engine.settings,
+    )
+
+    assert answer.title == "Voorraadscenario"
+    assert "€ 350.000" in answer.message
+    assert any("Boekwaarde voorraad" in item for item in answer.details)
+    assert engine.settings == original
+
+
+def test_combined_property_and_inventory_question() -> None:
+    engine = sample_engine()
+    answer = answer_question(
+        "Wat als het pand € 1.575.000 en de voorraad € 325.000 oplevert?",
+        engine,
+        engine.settings,
+    )
+
+    assert answer.title == "Gecombineerd verkoopscenario"
+    assert "€ 325.000" in answer.message
+    assert any("€ 1.575.000" in item for item in answer.details)
+
+
 def test_bitcoin_drop_is_explained_without_projecting_growth() -> None:
     engine = sample_engine()
     answer = answer_question(

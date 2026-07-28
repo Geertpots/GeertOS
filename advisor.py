@@ -40,6 +40,22 @@ def _percentage(question: str) -> float | None:
     return float(match.group(1).replace(",", "."))
 
 
+def _amount_near_label(question: str, label: str) -> float | None:
+    """Lees het bedrag dat direct na een benoemd onderdeel staat."""
+    match = re.search(
+        rf"{re.escape(label)}[^0-9]{{0,30}}(?:€\s*)?"
+        r"(\d[\d.]*(?:,\d{1,2})?)",
+        question,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    try:
+        return float(match.group(1).replace(".", "").replace(",", "."))
+    except ValueError:
+        return None
+
+
 def _decision_answer(
     result: object,
     settings: Mapping[str, object],
@@ -92,6 +108,41 @@ def answer_question(
     text = " ".join(question.lower().split())
     amounts = _amounts(question)
     baseline = engine.evaluate()
+
+    if "voorraad" in text and amounts:
+        inventory_price = _amount_near_label(question, "voorraad")
+        property_price = _amount_near_label(question, "pand")
+        if inventory_price is None:
+            inventory_price = amounts[-1]
+        overrides = {"sale_inventory_price": inventory_price}
+        if property_price is not None:
+            overrides["sale_property_price"] = property_price
+        scenario = engine.evaluate(overrides)
+        inventory_profit = float(scenario.sale["inventory_book_profit"])
+        first_year = scenario.projection.iloc[0]
+        combined = property_price is not None
+        return AdvisorAnswer(
+            "Gecombineerd verkoopscenario" if combined else "Voorraadscenario",
+            f"Met een voorraadverkoop van {money(inventory_price)} komt de totale "
+            f"bruto verkoop op {money(scenario.sale['gross'])} en resteert naar "
+            f"verwachting {money(scenario.sale['net_cash'])} netto cash.",
+            "success" if inventory_profit >= 0 else "warning",
+            (
+                f"Gebruikte pandprijs: "
+                f"{money(property_price if property_price is not None else float(settings.get('sale_property_price', 0) or 0))}.",
+                f"Boekwaarde voorraad: "
+                f"{money(float(settings.get('sale_inventory_book', 0) or 0))}; "
+                f"winst/verlies: {money(inventory_profit)}.",
+                f"Geplande stakingslijfrente: "
+                f"{money(float(scenario.sale['annuity_reserve']))}.",
+                f"Netto vermogen na verkoop: {money(scenario.post_sale_net_worth)}.",
+                f"Netto maandinkomen {int(first_year['year'])}: "
+                f"{money(float(first_year['actual']))}.",
+                f"Verwacht vermogen in 2047: "
+                f"{money(float(scenario.projection_health['end_balance']))}.",
+            ),
+            "Project Vrijheid",
+        )
 
     if ("pand" in text or "verkoop" in text) and amounts:
         price = max(amounts)
@@ -193,7 +244,8 @@ def answer_question(
     return AdvisorAnswer(
         "Ik heb meer richting nodig",
         "Deze veilige eerste adviseur herkent vragen over verkoopprijs, extra "
-        "maanduitgaven, grote aankopen, Bitcoin-dalingen en financiële vrijheid.",
+        "pand- en voorraadverkoop, maanduitgaven, grote aankopen, "
+        "Bitcoin-scenario's en financiële vrijheid.",
         "info",
         (
             "Probeer bijvoorbeeld: Wat gebeurt er als het pand € 1.575.000 oplevert?",

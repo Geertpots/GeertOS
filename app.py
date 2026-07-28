@@ -177,7 +177,7 @@ if access_control_enabled():
     st.sidebar.caption("🔒 Toegangscode actief")
 else:
     st.sidebar.caption("💻 Alleen lokaal · geen toegangscode ingesteld")
-st.sidebar.success("Sprint 10E · Dagelijkse cockpit actief")
+st.sidebar.success("Sprint 10F · Pand- en voorraadscenario actief")
 PAGES = [
     "Vandaag",
     "Dashboard",
@@ -533,10 +533,19 @@ def dashboard() -> None:
 
     engine = make_engine()
     base_price = number("sale_property_price", 1595000)
+    base_inventory = number("sale_inventory_price", 275000)
     scenario_price = float(
         st.session_state.get("dashboard_sale_price", base_price)
     )
-    result = engine.evaluate({"sale_property_price": scenario_price})
+    scenario_inventory = float(
+        st.session_state.get("dashboard_inventory_price", base_inventory)
+    )
+    result = engine.evaluate(
+        {
+            "sale_property_price": scenario_price,
+            "sale_inventory_price": scenario_inventory,
+        }
+    )
     projection = result.projection
 
     st.markdown(
@@ -574,12 +583,34 @@ def dashboard() -> None:
         help="Schuif om direct te zien wat een andere verkoopprijs betekent.",
         key="dashboard_sale_price",
     )
+    scenario_inventory = st.slider(
+        "Verkoopwaarde voorraad",
+        min_value=200000,
+        max_value=400000,
+        value=int(min(max(base_inventory, 200000), 400000)),
+        step=25000,
+        format="€ %d",
+        help="Schuif om de voorraad als onderdeel van de totale bedrijfsverkoop mee te rekenen.",
+        key="dashboard_inventory_price",
+    )
     sale = result.sale
     a, b, c, d = st.columns(4)
     a.metric("Verkoopprijs pand", money(scenario_price))
-    b.metric("Bruto verkoop", money(sale["gross"]))
-    c.metric("Netto cash", money(sale["net_cash"]))
-    d.metric("Totaal na verkoop", money(sale["total_after_sale"]))
+    b.metric("Verkoopwaarde voorraad", money(scenario_inventory))
+    c.metric("Bruto verkoop", money(sale["gross"]))
+    d.metric("Netto cash", money(sale["net_cash"]))
+
+    inventory_book = number("sale_inventory_book", 335000)
+    inventory_difference = float(sale["inventory_book_profit"])
+    a, b, c, d = st.columns(4)
+    a.metric("Boekwaarde voorraad", money(inventory_book))
+    b.metric(
+        "Winst/verlies voorraad",
+        money(inventory_difference),
+        "winst" if inventory_difference >= 0 else "verlies",
+    )
+    c.metric("Stakingslijfrente", money(sale["annuity_reserve"]))
+    d.metric("Totaal vermogen na verkoop", money(result.post_sale_net_worth))
 
     goal = number("sale_net_cash_goal", 600000)
     difference = sale["net_cash"] - goal
@@ -589,11 +620,16 @@ def dashboard() -> None:
         st.warning(f"Dit scenario ligt {money(abs(difference))} onder je netto-cashdoel.")
 
     if st.button(
-        "Gebruik deze verkoopprijs in Project Vrijheid",
+        "Gebruik dit pand- en voorraadscenario in Project Vrijheid",
         use_container_width=True,
     ):
-        set_settings({"sale_property_price": scenario_price})
-        st.success("De verkoopprijs is opgeslagen in Project Vrijheid.")
+        set_settings(
+            {
+                "sale_property_price": scenario_price,
+                "sale_inventory_price": scenario_inventory,
+            }
+        )
+        st.success("De verkoopprijzen van pand en voorraad zijn opgeslagen.")
 
     st.markdown(
         '<div class="pv-section-title">Inkomen en vermogen tot 2047</div>',
@@ -2204,7 +2240,7 @@ st.markdown(
     f"""
     <div class="pv-footer">
       <span>GeertOS · Freedom Edition</span>
-      <span>Veilig verbonden · {backend_name()} · Sprint 10E</span>
+      <span>Veilig verbonden · {backend_name()} · Sprint 10F</span>
     </div>
     """,
     unsafe_allow_html=True,

@@ -85,6 +85,23 @@ def test_sale_price_recalculates_all_dependent_results() -> None:
     assert higher.bitcoin_value == pytest.approx(base.bitcoin_value)
 
 
+def test_inventory_price_recalculates_all_dependent_results() -> None:
+    engine = sample_engine()
+    original = engine.settings.copy()
+    base = engine.evaluate()
+    higher = engine.evaluate({"sale_inventory_price": 350_000})
+
+    assert higher.sale["gross"] > base.sale["gross"]
+    assert higher.sale["net_cash"] > base.sale["net_cash"]
+    assert higher.post_sale_net_worth > base.post_sale_net_worth
+    assert higher.planned_etf_start > base.planned_etf_start
+    assert (
+        higher.projection.iloc[-1]["etf_closing"]
+        > base.projection.iloc[-1]["etf_closing"]
+    )
+    assert engine.settings == original
+
+
 def test_scenario_table_uses_same_sale_calculation() -> None:
     engine = sample_engine()
     table = engine.scenario_table([1_400_000, 1_500_000, 1_600_000])
